@@ -67,7 +67,7 @@ class QNetwork(nn.Module):
         # Train Model
         loss = ""
         scores = ""
-        optimizer = optim.Adam(q_learner.parameters(), lr=0.001)
+        optimizer = optim.Adam(q_learner.parameters(), lr=0.0001)
         for i in range(1):
             scores = self(torch.stack(as_tensors))
             target_scores: List[torch.tensor] = self.create_target_scores(scores, states, rewards, commands)
@@ -90,13 +90,6 @@ class QNetwork(nn.Module):
         score: float = float(torch.max(scores))
         return as_command, score, scores
 
-
-def weighted_loss(input: torch.tensor, target: torch.tensor, commands: List[Command]):
-    weights: torch.tensor = torch.zeros(input.shape)
-    for i in range(input.shape[0]):
-        weights[i][int(commands[i])] = 1
-    return (weights * (input - target).abs()).sum() / len(commands)
-
 # Init Car Racing
 car_racing: CarRacing = CarRacing()
 car_racing.reset()
@@ -104,22 +97,20 @@ all_commands: List[Command] = [command for command in Command]
 
 # Init Network
 q_learner: QNetwork = QNetwork()
-
 BATCH_SIZE: int = 64
 states: List[torch.tensor] = []
 rewards: List[float] = []
 commands: List[Command] = []
-
 epsilon: float = 1.0
 
 while True:
+    # Start Track Again
     car_racing.reset(seed=0)
 
-    # Drive until Leaving Track
+    # Drive on Track until leaving Track
     current_reward: int = 0
-    i: int = 0
-    already_highspeed: bool = False
-    while current_reward >= 0 or i % 20 != 0:
+    while current_reward >= 0:
+        # Make Decision Where to Drive
         current_reward = 0
         command, score, scores = q_learner.predict(car_racing.state)
         predicted_command: Command = command
@@ -130,12 +121,9 @@ while True:
             current_state, reward, done, info = car_racing.step(as_action)
             current_reward += reward
             #car_racing.render(mode="human")
-        if current_reward < 5:
-            break
         states.append(car_racing.state)
         rewards.append(current_reward)
         commands.append(predicted_command)
-        i += 1
 
         # Train Model
         if len(states) > BATCH_SIZE:
@@ -143,7 +131,7 @@ while True:
             sampled = random.sample(list(as_zip), BATCH_SIZE)
             states_sampled, rewards_sampled, commands_sampled = zip(*sampled)
             q_learner.train_model(states_sampled, rewards_sampled, commands_sampled)
-            epsilon *= 0.999
+            epsilon *= 0.9999
             print(f"Epsilon: {epsilon}")
             print("")
 

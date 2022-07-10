@@ -80,7 +80,6 @@ class QNetwork(nn.Module):
         print("Model Update:")
         print_scores(scores, rewards, commands)
         print(f"Loss: {loss}")
-        print("")
 
     def predict(self, state: np.ndarray) -> Tuple[Command, float, torch.tensor]:
         correct_shape: np.ndarray = np.moveaxis(state, -1, 0).astype(np.float32)
@@ -110,20 +109,22 @@ BATCH_SIZE: int = 64
 states: List[torch.tensor] = []
 rewards: List[float] = []
 commands: List[Command] = []
-episodes: int = 0
+
+epsilon: float = 1.0
 
 while True:
     car_racing.reset(seed=0)
 
     # Drive until Leaving Track
     current_reward: int = 0
-    predicted_command: Command = Command.STRAIGHT
     i: int = 0
     already_highspeed: bool = False
     while current_reward >= 0 or i % 20 != 0:
         current_reward = 0
         command, score, scores = q_learner.predict(car_racing.state)
-        predicted_command = command
+        predicted_command: Command = command
+        if random.random() < epsilon:
+            predicted_command = random.choice(all_commands)
         as_action: np.ndarray = get_action(predicted_command)
         for i in range(20):
             current_state, reward, done, info = car_racing.step(as_action)
@@ -136,13 +137,15 @@ while True:
         commands.append(predicted_command)
         i += 1
 
-    # Train Model
-    episodes += 1
-    if len(states) > BATCH_SIZE:
-        as_zip = list(zip(states, rewards, commands))
-        sampled = random.sample(list(as_zip), BATCH_SIZE)
-        states_sampled, rewards_sampled, commands_sampled = zip(*sampled)
-        q_learner.train_model(states_sampled, rewards_sampled, commands_sampled)
+        # Train Model
+        if len(states) > BATCH_SIZE:
+            as_zip = list(zip(states, rewards, commands))
+            sampled = random.sample(list(as_zip), BATCH_SIZE)
+            states_sampled, rewards_sampled, commands_sampled = zip(*sampled)
+            q_learner.train_model(states_sampled, rewards_sampled, commands_sampled)
+            epsilon *= 0.999
+            print(f"Epsilon: {epsilon}")
+            print("")
 
 
 

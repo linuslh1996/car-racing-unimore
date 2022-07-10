@@ -1,4 +1,5 @@
 import random
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Dict, List, Tuple
 
@@ -8,19 +9,26 @@ from torch import nn
 import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
-import cv2
 
 class Command(IntEnum):
     LEFT = 0
     STRAIGHT = 1
     RIGHT = 2
 
-def print_scores(scores: torch.tensor, rewards: List[float], commands: List[Command]):
+@dataclass
+class EvaluatedCommand:
+    state: np.ndarray
+    command: Command
+    next_state: np.ndarray
+    reward: float
+
+def print_scores(scores: torch.tensor, evaluated_commands: List[EvaluatedCommand]):
     all_commands: List[Command] = [command for command in Command]
     for j in range(scores.shape[0]):
-        print(f"Reward: {round(rewards[j], 2)}, {str(commands[j])}")
+        print(f"{str(evaluated_commands[j].command)} performed: {round(evaluated_commands[j].reward, 2)}")
         for i in range(len(all_commands)):
             print(f"{str(all_commands[i]).split('.')[1]}: {round(float(scores[j][i]), 2)}", end=" ")
+        print("")
         print("")
     print("")
 
@@ -50,27 +58,31 @@ class QNetwork(nn.Module):
         x = self.fc2(x)
         return x
 
-    def create_target_scores(self, scores: torch.tensor, states: List[np.ndarray], rewards: List[float], commands: List[Command]) -> List[torch.tensor]:
-        # Create Target Result
+    def create_target_scores(self, evaluated_commands: List[EvaluatedCommand], scores: torch.tensor) -> List[torch.tensor]:
         target_tensors: List[torch.tensor] = []
-        for i, (state, reward, command) in enumerate(zip(states, rewards, commands)):
+        for i, evaluated_command in enumerate(evaluated_commands):
             target_tensor: torch.tensor = torch.clone(scores[i])
-            target_tensor[int(command)] = reward
+            _, best_score_next_state, _ = self.predict(evaluated_command.next_state)
+            target_tensor[int(command)] = evaluated_command.reward
             target_tensors.append(target_tensor)
         return target_tensors
 
-    def train_model(self, states: List[np.ndarray], rewards: List[float], commands: List[Command]):
+    def state_to_tensor(self, input_state: np.ndarray) -> torch.tensor:
+        with_color_channel_in_correct_axis: np.ndarray = np.moveaxis(input_state, -1, 0).astype(np.float32)
+        as_tensor: torch.tensor = torch.tensor(with_color_channel_in_correct_axis)
+        return as_tensor
+
+    def train_model(self, evaluated_commands: List[EvaluatedCommand]):
         # Update Model
-        correct_shape: List[np.ndarray] = [np.moveaxis(state, -1, 0).astype(np.float32) for state in states]
-        as_tensors: List[torch.tensor] = [torch.tensor(correct_shape) for correct_shape in correct_shape]
+        input_states: List[torch.tensor] = [self.state_to_tensor(command.state) for command in evaluated_commands]
 
         # Train Model
         loss = ""
         scores = ""
         optimizer = optim.Adam(q_learner.parameters(), lr=0.0001)
         for i in range(1):
-            scores = self(torch.stack(as_tensors))
-            target_scores: List[torch.tensor] = self.create_target_scores(scores, states, rewards, commands)
+            scores = self(torch.stack(input_states))
+            target_scores: List[torch.tensor] = self.create_target_scores(evaluated_commands, scores)
             criterion = nn.MSELoss()
             loss = criterion(scores, torch.stack(target_scores))
             loss.backward()
@@ -78,12 +90,11 @@ class QNetwork(nn.Module):
 
         # Print Information
         print("Model Update:")
-        print_scores(scores, rewards, commands)
+        print_scores(scores, evaluated_commands)
         print(f"Loss: {loss}")
 
     def predict(self, state: np.ndarray) -> Tuple[Command, float, torch.tensor]:
-        correct_shape: np.ndarray = np.moveaxis(state, -1, 0).astype(np.float32)
-        as_tensor: torch.tensor = torch.tensor(correct_shape)
+        as_tensor: torch.tensor = self.state_to_tensor(state)
         as_tensor = as_tensor[None, ...]
         scores: torch.tensor = self(as_tensor)
         as_command: Command = Command(int(torch.argmax(scores)))
@@ -98,9 +109,7 @@ all_commands: List[Command] = [command for command in Command]
 # Init Network
 q_learner: QNetwork = QNetwork()
 BATCH_SIZE: int = 64
-states: List[torch.tensor] = []
-rewards: List[float] = []
-commands: List[Command] = []
+evaluated_commands: List[EvaluatedCommand] = []
 epsilon: float = 1.0
 
 while True:
@@ -112,26 +121,24 @@ while True:
     while current_reward >= 0:
         # Make Decision Where to Drive
         current_reward = 0
-        command, score, scores = q_learner.predict(car_racing.state)
-        predicted_command: Command = command
+        beginning_state: np.ndarray = car_racing.state
+        command, score, scores = q_learner.predict(beginning_state)
+        performed_command: Command = command
         if random.random() < epsilon:
-            predicted_command = random.choice(all_commands)
-        as_action: np.ndarray = get_action(predicted_command)
-        for i in range(20):
-            current_state, reward, done, info = car_racing.step(as_action)
+            performed_command = random.choice(all_commands)
+        as_action: np.ndarray = get_action(performed_command)
+        end_state: np.ndarray = car_racing.state
+        for i in range(10):
+            end_state, reward, done, info = car_racing.step(as_action)
             current_reward += reward
             #car_racing.render(mode="human")
-        states.append(car_racing.state)
-        rewards.append(current_reward)
-        commands.append(predicted_command)
+        evaluated_commands.append(EvaluatedCommand(beginning_state, performed_command, end_state, current_reward))
 
         # Train Model
-        if len(states) > BATCH_SIZE:
-            as_zip = list(zip(states, rewards, commands))
-            sampled = random.sample(list(as_zip), BATCH_SIZE)
-            states_sampled, rewards_sampled, commands_sampled = zip(*sampled)
-            q_learner.train_model(states_sampled, rewards_sampled, commands_sampled)
-            epsilon *= 0.9999
+        if len(evaluated_commands) > BATCH_SIZE:
+            sampled = random.sample(evaluated_commands, BATCH_SIZE)
+            q_learner.train_model(sampled)
+            epsilon *= 0.9995
             print(f"Epsilon: {epsilon}")
             print("")
 

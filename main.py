@@ -4,6 +4,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import cv2
 import gym
 from gym.envs.box2d import CarRacing
 import torch
@@ -14,12 +15,14 @@ import numpy as np
 import sys
 
 GAMMA: float = 0.95
-TARGET_NETWORK_UPDATE_FREQUENCY = 50
 STEP_SIZE = 10
+TARGET_NETWORK_UPDATE_FREQUENCY = 5 * STEP_SIZE
 LEARNING_RATE = 0.001
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9999
+EPSILON_DECAY = 0.999
 MODEL_SAVE_FREQUENCY = 50
+BUFFER_SIZE = 1000
+STATES_SIZE = 3
 
 class Command(IntEnum):
     LEFT = 0
@@ -28,9 +31,9 @@ class Command(IntEnum):
 
 @dataclass
 class EvaluatedCommand:
-    state: np.ndarray
+    state: List[np.ndarray]
     command: Command
-    next_state: np.ndarray
+    next_state: List[np.ndarray]
     reward: float
 
 def get_action(command: Command) -> np.ndarray:
@@ -68,10 +71,11 @@ class QNetwork(nn.Module):
             target_tensors.append(target_tensor)
         return target_tensors
 
-    def state_to_tensor(self, input_state: np.ndarray) -> torch.tensor:
-        with_color_channel_in_correct_axis: np.ndarray = np.moveaxis(input_state, -1, 0).astype(np.float32)
-        normalized: np.ndarray = with_color_channel_in_correct_axis / 255.0
-        as_tensor: torch.tensor = torch.tensor(normalized)
+    def state_to_tensor(self, input_state: List[np.ndarray]) -> torch.tensor:
+        greyscale_images: List[np.ndarray] = [cv2.cvtColor(state, cv2.COLOR_BGR2GRAY) for state in input_state]
+        normalized: List[np.ndarray] = [greyscale_image / 255.0 for greyscale_image in greyscale_images]
+        as_tensors: List[torch.tensor] = [torch.tensor(normal.astype(np.float32)) for normal in normalized]
+        as_tensor: torch.tensor = torch.stack(as_tensors)
         return as_tensor
 
     def train_model(self, evaluated_commands: List[EvaluatedCommand], target_network):
@@ -95,7 +99,7 @@ class QNetwork(nn.Module):
         print_scores(scores, evaluated_commands, target_network)
         print(f"Loss: {loss}")
 
-    def predict(self, state: np.ndarray) -> Tuple[Command, float, torch.tensor]:
+    def predict(self, state: List[np.ndarray]) -> Tuple[Command, float, torch.tensor]:
         as_tensor: torch.tensor = self.state_to_tensor(state)
         as_tensor = as_tensor[None, ...]
         scores: torch.tensor = self(as_tensor)
@@ -148,16 +152,18 @@ while True:
     if e % TARGET_NETWORK_UPDATE_FREQUENCY == 0:
         print(f"Episode: {e}")
         q_target_net.set_weights(q_learner)
+    if e % MODEL_SAVE_FREQUENCY == 0 and e > 0:
+        q_learner.save_model(weights_path / f"weights_{e}.pt")
 
     # Drive on Track until leaving Track
     negative_rewards_in_a_row: int = 0
     current_time: int = 1
     scores: torch.tensor = torch.zeros(10)
     commands: List[EvaluatedCommand] = []
+    states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
     while negative_rewards_in_a_row < (20 / STEP_SIZE) or current_time < 50:
         # Make Decision Where to Drive
-        beginning_state: np.ndarray = car_racing.state
-        command, score, scores = q_learner.predict(beginning_state)
+        command, score, scores = q_learner.predict(states)
         performed_command: Command = command
         if random.random() < epsilon:
             performed_command = random.choice(all_commands)
@@ -169,20 +175,18 @@ while True:
             accumulated_reward += reward
             current_time += 1
             car_racing.render(mode="human")
-        evaluated_commands.append(EvaluatedCommand(beginning_state, performed_command, end_state, accumulated_reward + 1))
+        states.append(end_state)
+        evaluated_commands.append(EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], accumulated_reward + 1))
+        states = states[1:STATES_SIZE+1]
         negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 
         # Train Model
         if len(evaluated_commands) > BATCH_SIZE:
             if len(evaluated_commands) > 5000:
-                evaluated_commands = evaluated_commands[1:5001]
+                evaluated_commands = evaluated_commands[1:BUFFER_SIZE+1]
             sampled = random.sample(evaluated_commands, BATCH_SIZE)
             #q_learner.train_model(sampled, q_target_net)
             epsilon *= EPSILON_DECAY
-
-        # Save Model
-        if e % MODEL_SAVE_FREQUENCY == 0 and e > 0:
-            q_learner.save_model(weights_path / f"weights_{e}.pt")
 
     print(f"Epsilon: {epsilon}")
     e += 1

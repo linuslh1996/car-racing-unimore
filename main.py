@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Dict, List, Tuple
 
+import gym
 from gym.envs.box2d import CarRacing
 import torch
 from torch import nn
@@ -11,11 +12,11 @@ import torch.optim as optim
 import numpy as np
 
 GAMMA: float = 0.95
-TARGET_NETWORK_UPDATE_FREQUENCY = 5
-STEP_SIZE = 20
+TARGET_NETWORK_UPDATE_FREQUENCY = 50
+STEP_SIZE = 10
 LEARNING_RATE = 0.0001
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9999
+EPSILON_DECAY = 0.9995
 
 class Command(IntEnum):
     LEFT = 0
@@ -60,7 +61,7 @@ class QNetwork(nn.Module):
         for i, evaluated_command in enumerate(evaluated_commands):
             target_tensor: torch.tensor = torch.clone(scores[i])
             _, best_score_next_state, _ = target_network.predict(evaluated_command.next_state)
-            target_tensor[int(command)] = evaluated_command.reward + GAMMA * best_score_next_state
+            target_tensor[int(evaluated_command.command)] = evaluated_command.reward + GAMMA * best_score_next_state
             target_tensors.append(target_tensor)
         return target_tensors
 
@@ -76,7 +77,7 @@ class QNetwork(nn.Module):
         # Train Model
         loss = ""
         scores = ""
-        optimizer = optim.Adam(q_learner.parameters(), lr=LEARNING_RATE)
+        optimizer = optim.Adam(self.parameters(), lr=LEARNING_RATE)
         for i in range(1):
             scores = self(torch.stack(input_states))
             target_scores: List[torch.tensor] = self.create_target_scores(evaluated_commands, scores, target_network)
@@ -113,7 +114,7 @@ def print_scores(scores: torch.tensor, evaluated_commands: List[EvaluatedCommand
         print("")
 
 # Init Car Racing
-car_racing: CarRacing = CarRacing()
+car_racing: CarRacing = gym.make('CarRacing-v1')
 car_racing.reset()
 all_commands: List[Command] = [command for command in Command]
 
@@ -130,13 +131,17 @@ while True:
     if e % TARGET_NETWORK_UPDATE_FREQUENCY == 0:
         print(f"Episode: {e}")
         q_target_net.set_weights(q_learner)
+    if e < 50:
+        GAMMA = 0.00
+    else:
+        GAMMA = 0.95
 
     # Drive on Track until leaving Track
     negative_rewards_in_a_row: int = 0
     current_time: int = 1
     scores: torch.tensor = torch.zeros(10)
     commands: List[EvaluatedCommand] = []
-    while negative_rewards_in_a_row <= 1 or current_time < 50:
+    while negative_rewards_in_a_row < 20 / STEP_SIZE or current_time < 50:
         # Make Decision Where to Drive
         beginning_state: np.ndarray = car_racing.state
         command, score, scores = q_learner.predict(beginning_state)
@@ -156,6 +161,8 @@ while True:
 
         # Train Model
         if len(evaluated_commands) > BATCH_SIZE:
+            if len(evaluated_commands) > 5000:
+                evaluated_commands = evaluated_commands[1:5001]
             sampled = random.sample(evaluated_commands, BATCH_SIZE)
             #states: torch.tensor = torch.stack([q_learner.state_to_tensor(command.state) for command in sampled])
             #scores = q_learner(states)

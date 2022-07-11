@@ -98,11 +98,13 @@ if len(sys.argv) > 1:
     assert sys.argv[1] == "-t" or sys.argv[1] == "-i"
     in_training = True if sys.argv[1] == "-t" else False
     weights_folder: Path = weights_path / sys.argv[2]
+    weights_folder.mkdir(parents=True, exist_ok=True)
     start_episode: int = int(sys.argv[3])
     q_learner: QNetwork = QNetwork(weights_folder)
-    q_learner.load_model(start_episode)
+    if start_episode > 0:
+        q_learner.load_model(start_episode)
     epsilon: float = 1.0
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 4:
         epsilon = float(sys.argv[4])
     parameters: List[str] = sys.argv[2].split("_")
     step_size, learning_rate, target_update = int(parameters[0]), float(parameters[1]), int(parameters[2])

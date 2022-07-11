@@ -1,6 +1,7 @@
 import random
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import gym
@@ -10,13 +11,15 @@ from torch import nn
 import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
+import sys
 
 GAMMA: float = 0.95
 TARGET_NETWORK_UPDATE_FREQUENCY = 50
 STEP_SIZE = 10
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.001
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9995
+EPSILON_DECAY = 0.9999
+MODEL_SAVE_FREQUENCY = 50
 
 class Command(IntEnum):
     LEFT = 0
@@ -67,7 +70,8 @@ class QNetwork(nn.Module):
 
     def state_to_tensor(self, input_state: np.ndarray) -> torch.tensor:
         with_color_channel_in_correct_axis: np.ndarray = np.moveaxis(input_state, -1, 0).astype(np.float32)
-        as_tensor: torch.tensor = torch.tensor(with_color_channel_in_correct_axis)
+        normalized: np.ndarray = with_color_channel_in_correct_axis / 255.0
+        as_tensor: torch.tensor = torch.tensor(normalized)
         return as_tensor
 
     def train_model(self, evaluated_commands: List[EvaluatedCommand], target_network):
@@ -102,6 +106,12 @@ class QNetwork(nn.Module):
     def set_weights(self, other_network):
         self.load_state_dict(other_network.state_dict())
 
+    def save_model(self, filepath: Path):
+        torch.save(self.state_dict(), filepath)
+
+    def load_model(self, filepath: Path):
+        self.load_state_dict(torch.load(filepath))
+
 
 def print_scores(scores: torch.tensor, evaluated_commands: List[EvaluatedCommand], target_network: QNetwork):
     all_commands: List[Command] = [command for command in Command]
@@ -119,29 +129,32 @@ car_racing.reset()
 all_commands: List[Command] = [command for command in Command]
 
 # Init Network
+weights_path: Path = Path() / "weights"
 q_learner: QNetwork = QNetwork()
+e: int = 0
+epsilon: float = 1.0 * pow(EPSILON_DECAY, e * (50 / STEP_SIZE))
+if len(sys.argv) > 1:
+    e = int(sys.argv[1])
+    weights_file: Path = weights_path / f"weights_{e}.pt"
+    q_learner.load_model(weights_file)
+    if len(sys.argv) > 2:
+        epsilon = float(sys.argv[2])
 q_target_net: QNetwork = QNetwork()
 evaluated_commands: List[EvaluatedCommand] = []
-epsilon: float = 1.0
-e: int = 0
 
 while True:
     # Start Track Again
-    car_racing.reset(seed=0)
+    car_racing.reset()
     if e % TARGET_NETWORK_UPDATE_FREQUENCY == 0:
         print(f"Episode: {e}")
         q_target_net.set_weights(q_learner)
-    if e < 50:
-        GAMMA = 0.00
-    else:
-        GAMMA = 0.95
 
     # Drive on Track until leaving Track
     negative_rewards_in_a_row: int = 0
     current_time: int = 1
     scores: torch.tensor = torch.zeros(10)
     commands: List[EvaluatedCommand] = []
-    while negative_rewards_in_a_row < 20 / STEP_SIZE or current_time < 50:
+    while negative_rewards_in_a_row < (20 / STEP_SIZE) or current_time < 50:
         # Make Decision Where to Drive
         beginning_state: np.ndarray = car_racing.state
         command, score, scores = q_learner.predict(beginning_state)
@@ -156,7 +169,7 @@ while True:
             accumulated_reward += reward
             current_time += 1
             car_racing.render(mode="human")
-        evaluated_commands.append(EvaluatedCommand(beginning_state, performed_command, end_state, accumulated_reward))
+        evaluated_commands.append(EvaluatedCommand(beginning_state, performed_command, end_state, accumulated_reward + 1))
         negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 
         # Train Model
@@ -164,19 +177,13 @@ while True:
             if len(evaluated_commands) > 5000:
                 evaluated_commands = evaluated_commands[1:5001]
             sampled = random.sample(evaluated_commands, BATCH_SIZE)
-            #states: torch.tensor = torch.stack([q_learner.state_to_tensor(command.state) for command in sampled])
-            #scores = q_learner(states)
-            #commands = sampled
-            q_learner.train_model(sampled, q_target_net)
+            #q_learner.train_model(sampled, q_target_net)
             epsilon *= EPSILON_DECAY
 
-    # Print Information
-    #if len(evaluated_commands) > BATCH_SIZE:
-        # print("Model Update:")
-        # print_scores(scores, commands, q_target_net)
-        # criterion = nn.MSELoss()
-        # loss = criterion(scores, torch.stack(q_learner.create_target_scores(commands, scores, q_target_net)))
-        # print(f"Loss: {loss}")
+        # Save Model
+        if e % MODEL_SAVE_FREQUENCY == 0 and e > 0:
+            q_learner.save_model(weights_path / f"weights_{e}.pt")
+
     print(f"Epsilon: {epsilon}")
     e += 1
 

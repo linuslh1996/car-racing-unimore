@@ -2,6 +2,7 @@ import random
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
+from telnetlib import GA
 from typing import Dict, List
 
 import gym
@@ -11,7 +12,7 @@ import sys
 from network import EvaluatedCommand, Command, QNetwork
 
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9995
+EPSILON_DECAY = 0.9999
 MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
@@ -47,7 +48,6 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
     while current_episode <= 500:
         car_racing.reset()
         if current_episode % params.target_network_update_frequency == 0:
-            print(f"Episode: {current_episode}")
             q_target_net.set_weights(q_learner)
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             q_learner.save_model(current_episode)
@@ -86,7 +86,12 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
                 sampled = random.sample(evaluated_commands, BATCH_SIZE)
                 q_learner.train_model(sampled, params.learning_rate, GAMMA, q_target_net)
                 epsilon *= EPSILON_DECAY
-        print(f"Epsilon: {epsilon}")
+        
+        # Print Information
+        if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+            q_learner.print_scores(q_learner.current_score, q_learner.current_evaluated_commands, q_learner.current_loss, GAMMA, q_target_net)
+            print(f"Epsilon: {epsilon}")
+        print(f"Episode: {current_episode}")
         current_episode += 1
 
 
@@ -110,9 +115,9 @@ if len(sys.argv) > 1:
     step_size, learning_rate, target_update = int(parameters[0]), float(parameters[1]), int(parameters[2])
     learn_q_values(start_episode, epsilon, q_learner, TrainingParameters(step_size, learning_rate, target_update, in_training))
 
+
 # Train Model with multiple combinations
 else:
-    # Combinations
     combinations: List[TrainingParameters] = [
         TrainingParameters(10, 0.001, 50, True),
         TrainingParameters(5, 0.001, 25, True),

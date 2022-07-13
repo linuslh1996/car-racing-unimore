@@ -1,9 +1,7 @@
 import random
 from dataclasses import dataclass
-from enum import IntEnum
 from pathlib import Path
-from telnetlib import GA
-from typing import Dict, List
+from typing import List
 
 import gym
 from gym.envs.box2d import CarRacing
@@ -17,6 +15,7 @@ MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
 GAMMA = 0.95
+LEARNING_RATE_DECAY = 0.1
 
 @dataclass
 class TrainingParameters:
@@ -24,14 +23,6 @@ class TrainingParameters:
     learning_rate: float
     target_network_update_frequency: int
     train_model: bool
-
-def get_action(command: Command) -> np.ndarray:
-    action_dict: Dict[Command, List[float]] = {
-        Command.LEFT : [-1, 0.5, 0],
-        Command.STRAIGHT : [0, 0.5, 0],
-        Command.RIGHT : [1, 0.5, 0]
-    }
-    return np.array(action_dict[command])
 
 def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork, params: TrainingParameters):
     # Init Car Racing
@@ -45,12 +36,14 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
     epsilon: float = start_epsilon
 
     # Do Car Racing
-    while current_episode <= 500:
+    while current_episode <= 1000:
         car_racing.reset()
         if current_episode % params.target_network_update_frequency == 0:
             q_target_net.set_weights(q_learner)
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             q_learner.save_model(current_episode)
+        if current_episode == 100:
+            params.learning_rate *= LEARNING_RATE_DECAY
 
         # Drive on Track until leaving Track
         negative_rewards_in_a_row: int = 0
@@ -63,7 +56,7 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             performed_command: Command = command
             if random.random() < epsilon:
                 performed_command = random.choice(all_commands)
-            as_action: np.ndarray = get_action(performed_command)
+            as_action: np.ndarray = performed_command.as_action()
             accumulated_reward: float = 0
             for _ in range(params.step_size):
                 end_state, reward, done, info = car_racing.step(as_action)
@@ -71,6 +64,8 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
                 current_time += 1
                 if not params.train_model:
                     car_racing.render(mode="human")
+            if as_action[1] == 1:
+                accumulated_reward *= 1.5
 
             # Save Actions to Memory
             states.append(car_racing.state)

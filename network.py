@@ -9,11 +9,26 @@ from torch import nn
 import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
+from typing import Dict
 
 class Command(IntEnum):
     LEFT = 0
     STRAIGHT = 1
     RIGHT = 2
+    LEFT_SLOW = 3
+    STRAIGHT_SLOW = 4
+    RIGHT_SLOW = 5
+
+    def as_action(self) -> np.ndarray:
+        action_dict: Dict[Command, List[float]] = {
+            Command.LEFT: [-1, 1, 0],
+            Command.STRAIGHT: [0, 1, 0],
+            Command.RIGHT: [1, 1, 0],
+            Command.LEFT_SLOW: [-1, 0.1, 0],
+            Command.STRAIGHT_SLOW: [0, 0.1, 0],
+            Command.RIGHT_SLOW: [1, 0.1, 0],
+        }
+        return np.array(action_dict[self])
 
 @dataclass
 class EvaluatedCommand:
@@ -21,6 +36,13 @@ class EvaluatedCommand:
     command: Command
     next_state: List[np.ndarray]
     reward: float
+
+def custom_loss_function(scores: torch.Tensor, target: torch.Tensor, performed_commands: List[EvaluatedCommand]) -> torch.Tensor:
+    weights = torch.zeros(target.shape)
+    for i in range(len(scores)):
+        weights[i][int(performed_commands[i].command)] = 1
+    return (weights * (scores - target) **2).sum() / len(performed_commands)
+
 
 class QNetwork(nn.Module):
     def __init__(self, weights_path: Path):
@@ -30,10 +52,10 @@ class QNetwork(nn.Module):
         self.conv1 = nn.Conv2d(3, 6, (7,7), stride=(3,3))
         self.conv2 = nn.Conv2d(6, 12, (4,4))
         self.fc1 = nn.Linear(12 * 6 * 6, 216)
-        self.fc2 = nn.Linear(216, 3)
-        self.weights_path: Path = weights_path
+        self.fc2 = nn.Linear(216, len([command for command in Command]))
 
         # Init Cache for Printing
+        self.weights_path: Path = weights_path
         self.current_score: torch.Tensor = torch.zeros(0)
         self.current_evaluated_commands: List[EvaluatedCommand] = []
         self.current_loss: torch.Tensor = torch.Tensor(0)

@@ -13,20 +13,19 @@ from typing import Dict
 
 class Command(IntEnum):
     LEFT = 0
-    STRAIGHT = 1
+    NO_DIRECTION = 1
     RIGHT = 2
-    LEFT_SLOW = 3
-    STRAIGHT_SLOW = 4
-    RIGHT_SLOW = 5
+    ACCELERATE = 3
+    BRAKE = 4
+
 
     def as_action(self) -> np.ndarray:
         action_dict: Dict[Command, List[float]] = {
-            Command.LEFT: [-1, 1, 0],
-            Command.STRAIGHT: [0, 1, 0],
-            Command.RIGHT: [1, 1, 0],
-            Command.LEFT_SLOW: [-1, 0.1, 0],
-            Command.STRAIGHT_SLOW: [0, 0.1, 0],
-            Command.RIGHT_SLOW: [1, 0.1, 0],
+            Command.LEFT: [-1, 0, 0],
+            Command.NO_DIRECTION: [0, 0, 0],
+            Command.RIGHT: [1, 0, 0],
+            Command.ACCELERATE: [0, 1.0, 0],
+            Command.BRAKE: [0, 0, 0.8]
         }
         return np.array(action_dict[self])
 

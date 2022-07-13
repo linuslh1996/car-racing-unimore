@@ -10,12 +10,12 @@ import sys
 from network import EvaluatedCommand, Command, QNetwork
 
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9999
+EPSILON_DECAY = 0.999
 MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
 GAMMA = 0.95
-LEARNING_RATE_DECAY = 0.1
+LEARNING_RATE_DECAY = 1.0
 
 @dataclass
 class TrainingParameters:
@@ -42,7 +42,7 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             q_target_net.set_weights(q_learner)
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             q_learner.save_model(current_episode)
-        if current_episode == 100:
+        if current_episode == 50:
             params.learning_rate *= LEARNING_RATE_DECAY
 
         # Drive on Track until leaving Track
@@ -64,8 +64,6 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
                 current_time += 1
                 if not params.train_model:
                     car_racing.render(mode="human")
-            if as_action[1] == 1:
-                accumulated_reward *= 1.5
 
             # Save Actions to Memory
             states.append(car_racing.state)
@@ -86,8 +84,8 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
         if len(evaluated_commands) > BATCH_SIZE and params.train_model:
             q_learner.print_scores(q_learner.current_score, q_learner.current_evaluated_commands, q_learner.current_loss, GAMMA, q_target_net)
             print(f"Epsilon: {epsilon}")
-        print(f"Episode: {current_episode}")
-        current_episode += 1
+            print(f"Episode: {current_episode}")
+            current_episode += 1
 
 
 # Init Network

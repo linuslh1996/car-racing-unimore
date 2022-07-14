@@ -10,12 +10,12 @@ import sys
 from network import EvaluatedCommand, Command, QNetwork
 
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.999
+EPSILON_DECAY = 0.9995
 MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
 GAMMA = 0.95
-LEARNING_RATE_DECAY = 1.0
+LEARNING_RATE_DECAY = 0.1
 
 @dataclass
 class TrainingParameters:
@@ -42,7 +42,7 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             q_target_net.set_weights(q_learner)
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             q_learner.save_model(current_episode)
-        if current_episode == 50:
+        if current_episode == 100:
             params.learning_rate *= LEARNING_RATE_DECAY
 
         # Drive on Track until leaving Track

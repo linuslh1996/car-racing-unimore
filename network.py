@@ -15,17 +15,12 @@ class Command(IntEnum):
     LEFT = 0
     NO_DIRECTION = 1
     RIGHT = 2
-    ACCELERATE = 3
-    BRAKE = 4
-
 
     def as_action(self) -> np.ndarray:
         action_dict: Dict[Command, List[float]] = {
-            Command.LEFT: [-1, 0, 0],
-            Command.NO_DIRECTION: [0, 0, 0],
-            Command.RIGHT: [1, 0, 0],
-            Command.ACCELERATE: [0, 1.0, 0],
-            Command.BRAKE: [0, 0, 0.8]
+            Command.LEFT: [-1, 0.5, 0],
+            Command.NO_DIRECTION: [0, 0.5, 0],
+            Command.RIGHT: [1, 0.5, 0],
         }
         return np.array(action_dict[self])
 

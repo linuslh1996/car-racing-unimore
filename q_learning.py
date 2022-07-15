@@ -1,6 +1,5 @@
 import random
 from dataclasses import dataclass
-from enum import IntEnum
 from pathlib import Path
 from typing import List, Tuple
 
@@ -13,17 +12,14 @@ import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
 
-from car_racing import EvaluatedCommand, Command
-
+from car_racing import EvaluatedCommand, Command, state_to_tensor
 
 BATCH_SIZE: int = 64
-EPSILON_DECAY = 0.9995
+EPSILON_DECAY = 0.9999
 MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
 GAMMA = 0.95
-LEARNING_RATE_DECAY = 0.1
-
 
 @dataclass
 class TrainingParameters:
@@ -73,21 +69,15 @@ class QNetwork(nn.Module):
             target_tensors.append(target_tensor)
         return target_tensors
 
-    def state_to_tensor(self, input_state: List[np.ndarray]) -> torch.Tensor:
-        greyscale_images: List[np.ndarray] = [cv2.cvtColor(state, cv2.COLOR_BGR2GRAY) for state in input_state]
-        normalized: List[np.ndarray] = [greyscale_image / 255.0 for greyscale_image in greyscale_images]
-        as_tensors: List[torch.Tensor] = [torch.Tensor(normal.astype(np.float32)) for normal in normalized]
-        as_tensor: torch.Tensor = torch.stack(as_tensors)
-        return as_tensor
-
     def train_model(self, evaluated_commands: List[EvaluatedCommand], learning_rate: float, gamma: float, target_network):
         # Update Model
-        input_states: List[torch.Tensor] = [self.state_to_tensor(command.state) for command in evaluated_commands]
+        input_states: List[torch.Tensor] = [state_to_tensor(command.state) for command in evaluated_commands]
 
         # Train Model
         optimizer = optim.Adam(self.parameters(), lr=learning_rate)
         for i in range(1):
             # Calculate Loss & Update Weights
+            optimizer.zero_grad()
             scores: torch.Tensor = self(torch.stack(input_states))
             target_scores: List[torch.Tensor] = self.create_target_scores(evaluated_commands, scores, gamma, target_network)
             criterion = nn.MSELoss()
@@ -101,7 +91,7 @@ class QNetwork(nn.Module):
             self.current_score = scores
 
     def predict(self, state: List[np.ndarray]) -> Tuple[Command, float, torch.Tensor]:
-        as_tensor: torch.Tensor = self.state_to_tensor(state)
+        as_tensor: torch.Tensor = state_to_tensor(state)
         as_tensor = as_tensor[None, ...]
         scores: torch.Tensor = self(as_tensor)
         as_command: Command = Command(int(torch.argmax(scores)))
@@ -147,8 +137,6 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             q_target_net.set_weights(q_learner)
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             q_learner.save_model(current_episode)
-        if current_episode == 100:
-            params.learning_rate *= LEARNING_RATE_DECAY
 
         # Drive on Track until leaving Track
         negative_rewards_in_a_row: int = 0
@@ -173,7 +161,7 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             # Save Actions to Memory
             states.append(car_racing.state)
             evaluated_commands.append(
-                EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], accumulated_reward + 1))
+                EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], accumulated_reward + 1, 0))
             states = states[1:STATES_SIZE + 1]
             negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 

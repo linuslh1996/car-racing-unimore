@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Dict, List
 
+import cv2
 import numpy as np
+import torch
 
 
 class Command(IntEnum):
@@ -24,3 +26,11 @@ class EvaluatedCommand:
     command: Command
     next_state: List[np.ndarray]
     reward: float
+    log_probability: float
+
+def state_to_tensor(input_state: List[np.ndarray]) -> torch.Tensor:
+    greyscale_images: List[np.ndarray] = [cv2.cvtColor(state, cv2.COLOR_BGR2GRAY) for state in input_state]
+    normalized: List[np.ndarray] = [greyscale_image / 255.0 for greyscale_image in greyscale_images]
+    as_tensors: List[torch.Tensor] = [torch.Tensor(normal.astype(np.float32)) for normal in normalized]
+    as_tensor: torch.Tensor = torch.stack(as_tensors)
+    return as_tensor

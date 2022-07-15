@@ -1,35 +1,36 @@
+import random
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 from typing import List, Tuple
 
 import cv2
+import gym
 import torch
+from gym.envs.box2d import CarRacing
 from torch import nn
 import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
-from typing import Dict
 
-class Command(IntEnum):
-    LEFT = 0
-    NO_DIRECTION = 1
-    RIGHT = 2
+from car_racing import EvaluatedCommand, Command
 
-    def as_action(self) -> np.ndarray:
-        action_dict: Dict[Command, List[float]] = {
-            Command.LEFT: [-1, 0.5, 0],
-            Command.NO_DIRECTION: [0, 0.5, 0],
-            Command.RIGHT: [1, 0.5, 0],
-        }
-        return np.array(action_dict[self])
+
+BATCH_SIZE: int = 64
+EPSILON_DECAY = 0.9995
+MODEL_SAVE_FREQUENCY = 50
+BUFFER_SIZE = 1000
+STATES_SIZE = 3
+GAMMA = 0.95
+LEARNING_RATE_DECAY = 0.1
+
 
 @dataclass
-class EvaluatedCommand:
-    state: List[np.ndarray]
-    command: Command
-    next_state: List[np.ndarray]
-    reward: float
+class TrainingParameters:
+    step_size: int
+    learning_rate: float
+    target_network_update_frequency: int
+    train_model: bool
 
 def custom_loss_function(scores: torch.Tensor, target: torch.Tensor, performed_commands: List[EvaluatedCommand]) -> torch.Tensor:
     weights = torch.zeros(target.shape)
@@ -126,3 +127,68 @@ class QNetwork(nn.Module):
             print("")
         print("")
         print(f"Loss: {round(float(loss), 2)}")
+
+
+def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork, params: TrainingParameters):
+    # Init Car Racing
+    car_racing: CarRacing = gym.make('CarRacing-v1')
+    car_racing.reset()
+    all_commands: List[Command] = [command for command in Command]
+    q_target_net: QNetwork = QNetwork(Path())
+    q_target_net.set_weights(q_learner)
+    evaluated_commands: List[EvaluatedCommand] = []
+    current_episode: int = start_episode
+    epsilon: float = start_epsilon
+
+    # Do Car Racing
+    while current_episode <= 1000:
+        car_racing.reset()
+        if current_episode % params.target_network_update_frequency == 0:
+            q_target_net.set_weights(q_learner)
+        if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
+            q_learner.save_model(current_episode)
+        if current_episode == 100:
+            params.learning_rate *= LEARNING_RATE_DECAY
+
+        # Drive on Track until leaving Track
+        negative_rewards_in_a_row: int = 0
+        current_time: int = 1
+        states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
+        while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
+
+            # Select Action and Perform it "STEP_SIZE" times
+            command, score, scores = q_learner.predict(states)
+            performed_command: Command = command
+            if random.random() < epsilon:
+                performed_command = random.choice(all_commands)
+            as_action: np.ndarray = performed_command.as_action()
+            accumulated_reward: float = 0
+            for _ in range(params.step_size):
+                end_state, reward, done, info = car_racing.step(as_action)
+                accumulated_reward += reward
+                current_time += 1
+                if not params.train_model:
+                    car_racing.render(mode="human")
+
+            # Save Actions to Memory
+            states.append(car_racing.state)
+            evaluated_commands.append(
+                EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], accumulated_reward + 1))
+            states = states[1:STATES_SIZE + 1]
+            negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
+
+            # Train Model
+            if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+                if len(evaluated_commands) > BUFFER_SIZE:
+                    evaluated_commands = evaluated_commands[1:BUFFER_SIZE + 1]
+                sampled = random.sample(evaluated_commands, BATCH_SIZE)
+                q_learner.train_model(sampled, params.learning_rate, GAMMA, q_target_net)
+                epsilon *= EPSILON_DECAY
+
+        # Print Information
+        if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+            q_learner.print_scores(q_learner.current_score, q_learner.current_evaluated_commands,
+                                   q_learner.current_loss, GAMMA, q_target_net)
+            print(f"Epsilon: {epsilon}")
+            print(f"Episode: {current_episode}")
+            current_episode += 1

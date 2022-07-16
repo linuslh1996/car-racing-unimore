@@ -18,7 +18,6 @@ from q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
 BATCH_SIZE = 128
 BUFFER_SIZE = 1000
 
-
 class PPONetwork(nn.Module):
 
     def __init__(self, weights_path: Path):
@@ -77,10 +76,11 @@ class PPONetwork(nn.Module):
         policy_scores, state_scores = self(torch.stack(states_to_predict))
         next_state_scores = self(torch.stack(next_states))[1]
         state_scores, next_state_scores = state_scores.squeeze(), next_state_scores.squeeze()
+        weights = torch.zeros(len(next_state_scores))
         for i in range(len(next_state_scores)):
-            if rewards[i] < 0:
-                next_state_scores[i] = state_scores[i]
-        advantages: torch.Tensor = next_state_scores - state_scores
+            if rewards[i] > 0:
+                weights[i] = 1
+        advantages: torch.Tensor = weights * next_state_scores - state_scores
 
         # Calculate Ratio
         new_probabilities: Categorical = Categorical(policy_scores).log_prob(performed_actions)

@@ -28,7 +28,7 @@ class PPONetwork(nn.Module):
         self.conv2 = nn.Conv2d(6, 12, (4, 4))
         output_nodes = 12 * 21 * 21 # out_channels * height * width
         self.value_head = nn.Sequential(nn.Linear(output_nodes, 216), nn.ReLU(), nn.Linear(216, 1), nn.Softplus())
-        self.policy_head = nn.Sequential(nn.Linear(output_nodes, 216), nn.ReLU(), nn.Linear(216, 3), nn.Softplus())
+        self.policy_head = nn.Sequential(nn.Linear(output_nodes, 216), nn.ReLU(), nn.Linear(216, len(Command.all_commands())), nn.Softplus())
 
         # Init Cache
         self.current_evaluated_commands = []
@@ -54,13 +54,17 @@ class PPONetwork(nn.Module):
     def load_model(self, episode: int):
         self.load_state_dict(torch.load(self.weights_path / f"weights_{episode}.pt"))
 
-    def predict(self, input_state: List[np.ndarray]) -> Tuple[Command, float]:
+    def predict(self, input_state: List[np.ndarray], in_train_mode: bool) -> Tuple[Command, float]:
         as_tensor: torch.Tensor = state_to_tensor(input_state)
         as_tensor = as_tensor[None, ...]
         action_probabilities: torch.Tensor = self(as_tensor)[0]
         distribution: Categorical = Categorical(action_probabilities)
         sampled_action = distribution.sample()
-        command_to_take: Command = Command(int(sampled_action))
+        command_to_take: Command = Command(0)
+        if in_train_mode:
+            command_to_take = Command(int(sampled_action))
+        else:
+            command_to_take = Command(int(torch.argmax(action_probabilities)))
         log_probability = distribution.log_prob(sampled_action)
         return command_to_take, log_probability
 
@@ -105,7 +109,7 @@ class PPONetwork(nn.Module):
         self.current_next_state_scores = next_state_scores
 
     def print_information(self):
-        all_commands: List[Command] = [command for command in Command]
+        all_commands: List[Command] = Command.all_commands()
         for j in range(len(self.current_evaluated_commands)):
             print(
                 f"{str(self.current_evaluated_commands[j].command).split('.')[1]} performed: "
@@ -140,7 +144,7 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
         while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
 
             # Select Action and Perform it "STEP_SIZE" times
-            command, log_prob = ppo_network.predict(states)
+            command, log_prob = ppo_network.predict(states, params.train_model)
             as_action: np.ndarray = command.as_action()
             accumulated_reward: float = 0
             for _ in range(params.step_size):

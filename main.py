@@ -1,11 +1,10 @@
 import sys
-import torch
 from pathlib import Path
 from ppo import PPONetwork, perform_ppo_learning
-from q_learning import TrainingParameters, learn_q_values, QNetwork
+from q_learning import TrainingParameters
 
 weights_path: Path = Path() / "weights"
-weights_folder: Path = weights_path / "ppo_weights"
+weights_folder: Path = weights_path / "ppo_first_try_first_curve_works"
 network = PPONetwork(weights_folder)
 weights_folder.mkdir(parents=True, exist_ok=True)
 assert sys.argv[1] == "-t" or sys.argv[1] == "-i"
@@ -19,8 +18,5 @@ else:
     network.load_model(episode)
     params: TrainingParameters = TrainingParameters(10, 0.001, 50, False)
     perform_ppo_learning(episode, network, params)
-
-
-
 
 

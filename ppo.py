@@ -54,6 +54,9 @@ class PPONetwork(nn.Module):
     def load_model(self, episode: int):
         self.load_state_dict(torch.load(self.weights_path / f"weights_{episode}.pt"))
 
+    def update_weights(self, other_network):
+        self.load_state_dict(other_network.state_dict())
+
     def predict(self, input_state: List[np.ndarray], in_train_mode: bool) -> Tuple[Command, float]:
         as_tensor: torch.Tensor = state_to_tensor(input_state)
         as_tensor = as_tensor[None, ...]
@@ -68,7 +71,7 @@ class PPONetwork(nn.Module):
         log_probability = distribution.log_prob(sampled_action)
         return command_to_take, log_probability
 
-    def train_model(self, evaluated_commands: List[EvaluatedCommand]):
+    def train_model(self, evaluated_commands: List[EvaluatedCommand], target_network):
         # Create Neccessary input tensors
         states_to_predict: List[torch.Tensor] = [state_to_tensor(command.state) for command in evaluated_commands]
         next_states: List[torch.Tensor] = [state_to_tensor(command.next_state) for command in evaluated_commands]
@@ -78,13 +81,9 @@ class PPONetwork(nn.Module):
 
         # Calculate Advantages
         policy_scores, state_scores = self(torch.stack(states_to_predict))
-        next_state_scores = self(torch.stack(next_states))[1]
+        next_state_scores = target_network(torch.stack(next_states))[1]
         state_scores, next_state_scores = state_scores.squeeze(), next_state_scores.squeeze()
-        weights = torch.zeros(len(next_state_scores))
-        for i in range(len(next_state_scores)):
-            if rewards[i] > 0:
-                weights[i] = 1
-        advantages: torch.Tensor = weights * next_state_scores - state_scores
+        advantages: torch.Tensor = next_state_scores - state_scores
 
         # Calculate Ratio
         new_probabilities: Categorical = Categorical(policy_scores).log_prob(performed_actions)
@@ -94,7 +93,8 @@ class PPONetwork(nn.Module):
         unclamped_score: torch.Tensor = ratios * advantages
         clamped_score: torch.Tensor = torch.clamp(ratios, 0.9, 1.1) * advantages
         action_loss = -torch.min(unclamped_score, clamped_score).mean()
-        value_loss = F.smooth_l1_loss(state_scores, rewards)
+        scores_target = next_state_scores + rewards
+        value_loss = F.smooth_l1_loss(state_scores, scores_target)
         loss: torch.Tensor = action_loss + 2. * value_loss
         optimizer = optim.Adam(self.parameters())
         optimizer.zero_grad()
@@ -130,18 +130,22 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
     car_racing.reset()
     evaluated_commands: List[EvaluatedCommand] = []
     current_episode: int = start_episode
+    target_network: PPONetwork = PPONetwork(Path())
+    target_network.update_weights(ppo_network)
 
     # Do Car Racing
     while current_episode <= 1500:
         car_racing.reset()
         if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
             ppo_network.save_model(current_episode)
+        if current_episode % 50 == 0:
+            target_network.update_weights(ppo_network)
 
         # Drive on Track until leaving Track
         negative_rewards_in_a_row: int = 0
         current_time: int = 1
         states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
-        while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
+        while negative_rewards_in_a_row < (200 / params.step_size) or current_time < 50:
 
             # Select Action and Perform it "STEP_SIZE" times
             command, log_prob = ppo_network.predict(states, params.train_model)
@@ -166,7 +170,7 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
                 if len(evaluated_commands) > BUFFER_SIZE:
                     evaluated_commands = evaluated_commands[1:BUFFER_SIZE + 1]
                 sampled = random.sample(evaluated_commands, BATCH_SIZE)
-                ppo_network.train_model(sampled)
+                ppo_network.train_model(sampled, target_network)
 
         # Print Information
         current_episode += 1

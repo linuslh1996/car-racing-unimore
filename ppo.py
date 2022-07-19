@@ -81,7 +81,8 @@ class PPONetwork(nn.Module):
 
         # Calculate Advantages
         policy_scores, state_scores = self(torch.stack(states_to_predict))
-        next_state_scores = target_network(torch.stack(next_states))[1]
+        next_state_scores = self(torch.stack(next_states))[1]
+        frozen_next_state_scores = target_network(torch.stack(next_states))[1]
         state_scores, next_state_scores = state_scores.squeeze(), next_state_scores.squeeze()
         advantages: torch.Tensor = next_state_scores - state_scores
 
@@ -145,7 +146,7 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
         negative_rewards_in_a_row: int = 0
         current_time: int = 1
         states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
-        while negative_rewards_in_a_row < (200 / params.step_size) or current_time < 50:
+        while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
 
             # Select Action and Perform it "STEP_SIZE" times
             command, log_prob = ppo_network.predict(states, params.train_model)

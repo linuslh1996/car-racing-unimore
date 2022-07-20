@@ -34,9 +34,8 @@ class PPONetwork(nn.Module):
         self.current_evaluated_commands = []
         self.current_loss: torch.Tensor = torch.tensor(0)
         self.current_policy_scores: torch.Tensor = torch.tensor(0)
-        self.current_next_steps_mean: torch.Tensor = torch.tensor(0)
         self.current_rewards: torch.Tensor = torch.tensor(0)
-        self.advantage_scores: torch.Tensor = torch.tensor(0)
+        self.current_advantage_scores: torch.Tensor = torch.tensor(0)
         self.weights_path: Path = weights_path
 
     def forward(self, x):
@@ -71,18 +70,21 @@ class PPONetwork(nn.Module):
         log_probability = distribution.log_prob(sampled_action)
         return command_to_take, log_probability
 
+    def advantage_scores(self, evaluated_commands: List[EvaluatedCommand]) -> torch.Tensor:
+        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[2:4]) for command in evaluated_commands])
+        advantages: torch.Tensor = next_steps_mean
+        return advantages
+
     def train_model(self, evaluated_commands: List[EvaluatedCommand]):
         # Create Neccessary input tensors
         states_to_predict: List[torch.Tensor] = [state_to_tensor(command.state) for command in evaluated_commands]
         performed_actions: torch.Tensor = torch.tensor([int(command.command) for command in evaluated_commands])
         old_probabilites: torch.Tensor = torch.tensor([command.log_probability for command in evaluated_commands])
-        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[2:]) for command in evaluated_commands])
-        previous_rewards: torch.Tensor = torch.tensor([command.rewards[0] for command in evaluated_commands])
         current_rewards: torch.Tensor = torch.tensor([command.rewards[1] for command in evaluated_commands])
 
         # Calculate Advantages
+        advantages: torch.Tensor = self.advantage_scores(evaluated_commands)
         policy_scores = self(torch.stack(states_to_predict))
-        advantages: torch.Tensor = (next_steps_mean - previous_rewards) + 0.5 * current_rewards
 
         # Calculate Ratio
         new_probabilities: Categorical = Categorical(policy_scores).log_prob(performed_actions)
@@ -102,9 +104,8 @@ class PPONetwork(nn.Module):
         self.current_evaluated_commands = evaluated_commands
         self.current_loss = loss
         self.current_policy_scores = policy_scores
-        self.current_next_steps_mean = next_steps_mean
+        self.current_advantage_scores = advantages
         self.current_rewards = current_rewards
-        self.advantage_scores = advantages
 
     def print_information(self):
         all_commands: List[Command] = Command.all_commands()
@@ -112,13 +113,12 @@ class PPONetwork(nn.Module):
         for j in range(len(self.current_evaluated_commands)):
             print(
                 f"{str(self.current_evaluated_commands[j].command).split('.')[1]} performed: "
-                f"{round(self.current_evaluated_commands[j].rewards[0],2)}        ",
+                f"{round(float(self.current_rewards[j]),2)}        ",
                 end=" ")
             for i in range(len(all_commands)):
                 print(f"{str(all_commands[i]).split('.')[1]}: {round(float(normalized_policy_scores[j][i]), 2)}", end=" ")
             print(" ")
-            next_steps_mean: float = round(float(self.current_next_steps_mean[j]), 2)
-            print(f"Current Next Steps Mean: {next_steps_mean}, Advantage Score: {self.advantage_scores[j]}")
+            print(f"Advantage Score: {self.current_advantage_scores[j]}")
         print("")
         print(f"Loss: {round(float(self.current_loss), 2)}")
 
@@ -179,16 +179,17 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
         for i in range(len(episode_evaluated_commands)):
             for j in range(5):
                 if i + j < len(episode_evaluated_commands):
-                    episode_evaluated_commands[i].rewards.append(episode_rewards[i+j])
+                    reward = episode_rewards[i+j] if episode_rewards[i+j] > 0 else -10
+                    episode_evaluated_commands[i].rewards.append(reward)
                 else:
-                    episode_evaluated_commands[i].rewards.append(-1)
+                    episode_evaluated_commands[i].rewards.append(-10)
         evaluated_commands += episode_evaluated_commands
         if len(evaluated_commands) > BUFFER_SIZE:
            evaluated_commands = evaluated_commands[-BUFFER_SIZE:]
 
         if not params.train_model:
-            for episode in episode_evaluated_commands:
-                print(f"Move: {str(episode.command)}, Advantage Score: {round(statistics.mean(episode.rewards[2:]) - episode.rewards[0] + episode.rewards[1] * 0.5)}")
+            for i, episode in enumerate(episode_evaluated_commands):
+                print(f"Move: {str(episode.command)}, Advantage Score: {ppo_network.advantage_scores(episode_evaluated_commands)[i]}")
             print("")
 
 

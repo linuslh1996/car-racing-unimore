@@ -1,10 +1,16 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
 import torch
+from gym.envs.box2d import CarRacing
+import pickle
+import copy
+
+from gym.envs.box2d.car_dynamics import Car
 
 
 class Command(IntEnum):
@@ -43,3 +49,7 @@ def state_to_tensor(input_state: List[np.ndarray]) -> torch.Tensor:
     as_tensors: List[torch.Tensor] = [torch.Tensor(normal.astype(np.float32)) for normal in normalized]
     as_tensor: torch.Tensor = torch.stack(as_tensors)
     return as_tensor
+
+def reset(car_racing: CarRacing, *, seed: Optional[int] = None, return_info: bool = False,
+                                                  options: Optional[dict] = None):
+    car_racing.car = Car(car_racing.world, *[0,0,0])

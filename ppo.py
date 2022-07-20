@@ -160,6 +160,9 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
                 current_time += 1
                 if not params.train_model:
                     car_racing.render(mode="human")
+            if finished_track:
+                print("Finished Track!")
+                break
 
             # Save Actions to Memory
             states.append(car_racing.state)
@@ -177,11 +180,6 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
                     sampled = random.sample(evaluated_commands, BATCH_SIZE)
                     ppo_network.train_model(sampled)
                     valid_output = ppo_network.weights_valid()
-
-
-            if finished_track:
-                print("Finished Track!")
-                break
 
         # Print Information
         current_episode += 1

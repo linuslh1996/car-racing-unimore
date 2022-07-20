@@ -34,7 +34,7 @@ class EvaluatedCommand:
     state: List[np.ndarray]
     command: Command
     next_state: List[np.ndarray]
-    reward: float
+    rewards: List[float] # The next 5 Rewards after the action
     log_probability: float
 
 def state_to_tensor(input_state: List[np.ndarray]) -> torch.Tensor:

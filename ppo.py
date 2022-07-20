@@ -1,4 +1,5 @@
 import random
+import statistics
 from pathlib import Path
 from typing import List, Tuple
 
@@ -27,15 +28,14 @@ class PPONetwork(nn.Module):
         self.conv1 = nn.Conv2d(3, 6, (7, 7))
         self.conv2 = nn.Conv2d(6, 12, (4, 4))
         output_nodes = 12 * 21 * 21 # out_channels * height * width
-        self.value_head = nn.Sequential(nn.Linear(output_nodes, 216), nn.ReLU(), nn.Linear(216, 1), nn.Softplus())
         self.policy_head = nn.Sequential(nn.Linear(output_nodes, 216), nn.ReLU(), nn.Linear(216, len(Command.all_commands())), nn.Softplus())
 
         # Init Cache
         self.current_evaluated_commands = []
         self.current_loss: torch.Tensor = torch.tensor(0)
         self.current_policy_scores: torch.Tensor = torch.tensor(0)
-        self.current_state_scores: torch.Tensor = torch.tensor(0)
-        self.current_next_state_scores: torch.Tensor = torch.tensor(0)
+        self.current_next_steps_mean: torch.Tensor = torch.tensor(0)
+        self.current_rewards: torch.Tensor = torch.tensor(0)
         self.weights_path: Path = weights_path
 
     def forward(self, x):
@@ -45,8 +45,7 @@ class PPONetwork(nn.Module):
         x = torch.flatten(x, 1)
 
         policy_probabilities: torch.Tensor = self.policy_head(x)
-        state_scores: torch.Tensor = self.value_head(x)
-        return policy_probabilities, state_scores
+        return policy_probabilities
 
     def save_model(self, episode: int):
         torch.save(self.state_dict(), self.weights_path / f"weights_{episode}.pt")
@@ -60,7 +59,7 @@ class PPONetwork(nn.Module):
     def predict(self, input_state: List[np.ndarray], in_train_mode: bool) -> Tuple[Command, float]:
         as_tensor: torch.Tensor = state_to_tensor(input_state)
         as_tensor = as_tensor[None, ...]
-        action_probabilities: torch.Tensor = self(as_tensor)[0]
+        action_probabilities: torch.Tensor = self(as_tensor)
         distribution: Categorical = Categorical(action_probabilities)
         sampled_action = distribution.sample()
         command_to_take: Command = Command(0)
@@ -74,16 +73,14 @@ class PPONetwork(nn.Module):
     def train_model(self, evaluated_commands: List[EvaluatedCommand]):
         # Create Neccessary input tensors
         states_to_predict: List[torch.Tensor] = [state_to_tensor(command.state) for command in evaluated_commands]
-        next_states: List[torch.Tensor] = [state_to_tensor(command.next_state) for command in evaluated_commands]
         performed_actions: torch.Tensor = torch.tensor([int(command.command) for command in evaluated_commands])
         old_probabilites: torch.Tensor = torch.tensor([command.log_probability for command in evaluated_commands])
-        rewards: torch.Tensor = torch.tensor([command.reward for command in evaluated_commands])
+        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[1:]) for command in evaluated_commands])
+        current_rewards: torch.Tensor = torch.tensor([command.rewards[0] for command in evaluated_commands])
 
         # Calculate Advantages
-        policy_scores, state_scores = self(torch.stack(states_to_predict))
-        next_state_scores = self(torch.stack(next_states))[1]
-        state_scores, next_state_scores = state_scores.squeeze(), next_state_scores.squeeze()
-        advantages: torch.Tensor = next_state_scores - state_scores + rewards
+        policy_scores = self(torch.stack(states_to_predict))
+        advantages: torch.Tensor = next_steps_mean - current_rewards
 
         # Calculate Ratio
         new_probabilities: Categorical = Categorical(policy_scores).log_prob(performed_actions)
@@ -93,9 +90,7 @@ class PPONetwork(nn.Module):
         unclamped_score: torch.Tensor = ratios * advantages
         clamped_score: torch.Tensor = torch.clamp(ratios, 0.9, 1.1) * advantages
         action_loss = -torch.min(unclamped_score, clamped_score).mean()
-        scores_target = next_state_scores + rewards
-        value_loss = F.smooth_l1_loss(state_scores, rewards)
-        loss: torch.Tensor = action_loss + 2. * value_loss
+        loss: torch.Tensor = action_loss
         optimizer = optim.Adam(self.parameters())
         optimizer.zero_grad()
         loss.backward()
@@ -105,8 +100,8 @@ class PPONetwork(nn.Module):
         self.current_evaluated_commands = evaluated_commands
         self.current_loss = loss
         self.current_policy_scores = policy_scores
-        self.current_state_scores = state_scores
-        self.current_next_state_scores = next_state_scores
+        self.current_next_steps_mean = next_steps_mean
+        self.current_rewards = current_rewards
 
     def print_information(self):
         all_commands: List[Command] = Command.all_commands()
@@ -114,13 +109,14 @@ class PPONetwork(nn.Module):
         for j in range(len(self.current_evaluated_commands)):
             print(
                 f"{str(self.current_evaluated_commands[j].command).split('.')[1]} performed: "
-                f"{round(self.current_evaluated_commands[j].reward,2)}        ",
+                f"{round(self.current_evaluated_commands[j].rewards[0],2)}        ",
                 end=" ")
             for i in range(len(all_commands)):
                 print(f"{str(all_commands[i]).split('.')[1]}: {round(float(normalized_policy_scores[j][i]), 2)}", end=" ")
             print(" ")
-            print(f"Current State Score: {round(float(self.current_state_scores[j]), 2)}, Next State Score: "
-                  f"{round(float(self.current_next_state_scores[j]), 2)}")
+            next_steps_mean: float = round(float(self.current_next_steps_mean[j]), 2)
+            current_reward: float = round(float(self.current_rewards[j]), 2)
+            print(f"Current Next Steps Mean: {next_steps_mean}, Advantage Score: {next_steps_mean - current_reward}")
         print("")
         print(f"Loss: {round(float(self.current_loss), 2)}")
 
@@ -142,8 +138,10 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
         negative_rewards_in_a_row: int = 0
         current_time: int = 1
         states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
-        allowed_negative_reward_in_a_row = 20 / params.step_size if params.train_model else 100 / params.step_size
-        while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
+        allowed_negative_reward_in_a_row = 20 / params.step_size if params.train_model else 50 / params.step_size
+        episode_evaluated_commands: List[EvaluatedCommand] = []
+        episode_rewards: List[float] = [0]
+        while negative_rewards_in_a_row < allowed_negative_reward_in_a_row or current_time < 50:
 
             # Select Action and Perform it "STEP_SIZE" times
             command, log_prob = ppo_network.predict(states, params.train_model)
@@ -158,29 +156,33 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
 
             # Save Actions to Memory
             states.append(car_racing.state)
-            evaluated_commands.append(
-                EvaluatedCommand(states[:STATES_SIZE], command, states[1:], accumulated_reward, log_prob))
+            episode_evaluated_commands.append(
+                EvaluatedCommand(states[:STATES_SIZE], command, states[1:], [], log_prob))
+            episode_rewards.append(accumulated_reward)
             states = states[1:STATES_SIZE + 1]
             negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 
             # Train Model
             if len(evaluated_commands) > BATCH_SIZE and params.train_model:
-                if len(evaluated_commands) > BUFFER_SIZE:
-                    evaluated_commands = evaluated_commands[1:BUFFER_SIZE + 1]
                 sampled = random.sample(evaluated_commands, BATCH_SIZE)
                 ppo_network.train_model(sampled)
-
-            if not params.train_model:
-                as_tensor: torch.Tensor = state_to_tensor(states)
-                as_tensor = as_tensor[None, ...]
-                state_score: float = float(ppo_network(as_tensor)[1])
-                print(round(state_score, 2))
 
         # Print Information
         current_episode += 1
         if len(evaluated_commands) > BATCH_SIZE and params.train_model:
             ppo_network.print_information()
             print(f"Episode: {current_episode}")
+
+        # Update Evaluated Commands
+        for i in range(len(episode_evaluated_commands)):
+            for j in range(5):
+                if i + j < len(episode_evaluated_commands):
+                    episode_evaluated_commands[i].rewards.append(episode_rewards[i+j])
+                else:
+                    episode_evaluated_commands[i].rewards.append(-1)
+        evaluated_commands += episode_evaluated_commands
+        if len(evaluated_commands) > BUFFER_SIZE:
+           evaluated_commands = evaluated_commands[-BUFFER_SIZE:]
 
 
 

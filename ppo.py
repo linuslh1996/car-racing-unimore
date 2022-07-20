@@ -40,12 +40,16 @@ class PPONetwork(nn.Module):
 
     def forward(self, x):
         pool: nn.MaxPool2d = nn.MaxPool2d(2, 2)
+
         x = pool(fn.relu(self.conv1(x)))
         x = pool(fn.relu(self.conv2(x)))
         x = torch.flatten(x, 1)
 
         policy_probabilities: torch.Tensor = self.policy_head(x)
         return policy_probabilities
+
+    def weights_valid(self) -> bool:
+        return not torch.any(torch.isnan(self.conv1.weight))
 
     def save_model(self, episode: int):
         torch.save(self.state_dict(), self.weights_path / f"weights_{episode}.pt")
@@ -149,8 +153,9 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
             command, log_prob = ppo_network.predict(states, params.train_model)
             as_action: np.ndarray = command.as_action()
             accumulated_reward: float = 0
+            finished_track: bool = False
             for _ in range(params.step_size):
-                end_state, reward, done, info = car_racing.step(as_action)
+                end_state, reward, finished_track, info = car_racing.step(as_action)
                 accumulated_reward += reward
                 current_time += 1
                 if not params.train_model:
@@ -166,8 +171,17 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
 
             # Train Model
             if len(evaluated_commands) > BATCH_SIZE and params.train_model:
-                sampled = random.sample(evaluated_commands, BATCH_SIZE)
-                ppo_network.train_model(sampled)
+                ppo_network.save_model(-1)
+                valid_output = False
+                while not valid_output:
+                    sampled = random.sample(evaluated_commands, BATCH_SIZE)
+                    ppo_network.train_model(sampled)
+                    valid_output = ppo_network.weights_valid()
+
+
+            if finished_track:
+                print("Finished Track!")
+                break
 
         # Print Information
         current_episode += 1
@@ -179,10 +193,10 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
         for i in range(len(episode_evaluated_commands)):
             for j in range(5):
                 if i + j < len(episode_evaluated_commands):
-                    reward = episode_rewards[i+j] if episode_rewards[i+j] > 0 else -10
+                    reward = episode_rewards[i+j] if episode_rewards[i+j] > 0 else -15
                     episode_evaluated_commands[i].rewards.append(reward)
                 else:
-                    episode_evaluated_commands[i].rewards.append(-10)
+                    episode_evaluated_commands[i].rewards.append(-15)
         evaluated_commands += episode_evaluated_commands
         if len(evaluated_commands) > BUFFER_SIZE:
            evaluated_commands = evaluated_commands[-BUFFER_SIZE:]

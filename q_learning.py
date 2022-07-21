@@ -3,16 +3,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
-import cv2
-import gym
 import torch
-from gym.envs.box2d import CarRacing
 from torch import nn
 import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
 
-from car_racing import EvaluatedCommand, Command, state_to_tensor
+from car_racing import EvaluatedCommand, Command, state_to_tensor, CustomRacing
 
 BATCH_SIZE: int = 64
 EPSILON_DECAY = 0.9999
@@ -65,7 +62,7 @@ class QNetwork(nn.Module):
         for i, evaluated_command in enumerate(evaluated_commands):
             target_tensor: torch.Tensor = torch.clone(scores[i])
             _, best_score_next_state, _ = target_network.predict(evaluated_command.next_state)
-            target_tensor[int(evaluated_command.command)] = evaluated_command.reward + gamma * best_score_next_state
+            target_tensor[int(evaluated_command.command)] = evaluated_command.rewards[0] + gamma * best_score_next_state
             target_tensors.append(target_tensor)
         return target_tensors
 
@@ -111,7 +108,7 @@ class QNetwork(nn.Module):
         all_commands: List[Command] = [command for command in Command]
         for j in range(scores.shape[0]):
             _, best_score_next_state, _ = target_network.predict(evaluated_commands[j].next_state)
-            print(f"{str(evaluated_commands[j].command).split('.')[1]} performed: {round(evaluated_commands[j].reward + gamma * best_score_next_state, 2)}        ", end=" ")
+            print(f"{str(evaluated_commands[j].command).split('.')[1]} performed: {round(evaluated_commands[j].rewards[0] + gamma * best_score_next_state, 2)}        ", end=" ")
             for i in range(len(all_commands)):
                 print(f"{str(all_commands[i]).split('.')[1]}: {round(float(scores[j][i]), 2)}", end=" ")
             print("")
@@ -121,49 +118,38 @@ class QNetwork(nn.Module):
 
 def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork, params: TrainingParameters):
     # Init Car Racing
-    car_racing: CarRacing = gym.make('CarRacing-v1')
-    car_racing.reset()
-    all_commands: List[Command] = [command for command in Command]
+    car_racing: CustomRacing = CustomRacing(start_episode)
     q_target_net: QNetwork = QNetwork(Path())
     q_target_net.set_weights(q_learner)
     evaluated_commands: List[EvaluatedCommand] = []
-    current_episode: int = start_episode
     epsilon: float = start_epsilon
 
     # Do Car Racing
-    while current_episode <= 1000:
+    while car_racing.current_episode() <= 1000:
         car_racing.reset()
-        if current_episode % params.target_network_update_frequency == 0:
+        if car_racing.current_episode() % params.target_network_update_frequency == 0:
             q_target_net.set_weights(q_learner)
-        if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
-            q_learner.save_model(current_episode)
+        if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
+            q_learner.save_model(car_racing.current_episode())
 
         # Drive on Track until leaving Track
         negative_rewards_in_a_row: int = 0
         current_time: int = 1
-        states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
+        states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
         while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
 
             # Select Action and Perform it "STEP_SIZE" times
             command, score, scores = q_learner.predict(states)
             performed_command: Command = command
             if random.random() < epsilon:
-                performed_command = random.choice(all_commands)
-            as_action: np.ndarray = performed_command.as_action()
-            accumulated_reward: float = 0
-            for _ in range(params.step_size):
-                end_state, reward, done, info = car_racing.step(as_action)
-                accumulated_reward += reward
-                current_time += 1
-                if not params.train_model:
-                    car_racing.render(mode="human")
+                performed_command = random.choice(Command.all_commands())
+            reward: float = car_racing.perform_step(performed_command, render=not params.train_model)
 
             # Save Actions to Memory
-            states.append(car_racing.state)
+            states.append(car_racing.current_state())
             evaluated_commands.append(
-                EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], accumulated_reward + 1, 0))
+                EvaluatedCommand(states[:STATES_SIZE], performed_command, states[1:], [reward], 0))
             states = states[1:STATES_SIZE + 1]
-            negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 
             # Train Model
             if len(evaluated_commands) > BATCH_SIZE and params.train_model:
@@ -178,5 +164,4 @@ def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork
             q_learner.print_scores(q_learner.current_score, q_learner.current_evaluated_commands,
                                    q_learner.current_loss, GAMMA, q_target_net)
             print(f"Epsilon: {epsilon}")
-            print(f"Episode: {current_episode}")
-            current_episode += 1
+            print(f"Episode: {car_racing.current_episode()}")

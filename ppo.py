@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch.nn.functional as fn
 from torch.distributions import Categorical
 
-from car_racing import state_to_tensor, Command, EvaluatedCommand
+from car_racing import state_to_tensor, Command, EvaluatedCommand, CustomRacing
 from q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
 
 BATCH_SIZE = 128
@@ -129,48 +129,34 @@ class PPONetwork(nn.Module):
 
 def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: TrainingParameters):
     # Init Car Racing
-    car_racing: CarRacing = gym.make('CarRacing-v1')
-    car_racing.reset()
+    car_racing: CustomRacing = CustomRacing(start_episode)
     evaluated_commands: List[EvaluatedCommand] = []
-    current_episode: int = start_episode
 
     # Do Car Racing
-    while current_episode <= 1500:
+    while car_racing.current_episode() <= 1500:
         car_racing.reset()
-        if current_episode % MODEL_SAVE_FREQUENCY == 0 and current_episode > 0:
-            ppo_network.save_model(current_episode)
+        if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
+            ppo_network.save_model(car_racing.current_episode())
 
         # Drive on Track until leaving Track
-        negative_rewards_in_a_row: int = 0
-        current_time: int = 1
-        states: List[np.ndarray] = [car_racing.state for _ in range(STATES_SIZE)]
-        allowed_negative_reward_in_a_row = 20 / params.step_size if params.train_model else 50 / params.step_size
+        states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
         episode_evaluated_commands: List[EvaluatedCommand] = []
         episode_rewards: List[float] = [0]
-        while negative_rewards_in_a_row < allowed_negative_reward_in_a_row or current_time < 50:
+        while not car_racing.out_of_track():
 
-            # Select Action and Perform it "STEP_SIZE" times
+            # Select Action
             command, log_prob = ppo_network.predict(states, params.train_model)
-            as_action: np.ndarray = command.as_action()
-            accumulated_reward: float = 0
-            finished_track: bool = False
-            for _ in range(params.step_size):
-                end_state, reward, finished_track, info = car_racing.step(as_action)
-                accumulated_reward += reward
-                current_time += 1
-                if not params.train_model:
-                    car_racing.render(mode="human")
-            if finished_track:
+            accumulated_reward: float = car_racing.perform_step(command, render=not params.train_model)
+            if car_racing.done():
                 print("Finished Track!")
                 break
 
             # Save Actions to Memory
-            states.append(car_racing.state)
+            states.append(car_racing.current_state())
             episode_evaluated_commands.append(
                 EvaluatedCommand(states[:STATES_SIZE], command, states[1:], [], log_prob))
             episode_rewards.append(accumulated_reward)
             states = states[1:STATES_SIZE + 1]
-            negative_rewards_in_a_row = negative_rewards_in_a_row + 1 if accumulated_reward < 0 else 0
 
             # Train Model
             if len(evaluated_commands) > BATCH_SIZE and params.train_model:
@@ -182,23 +168,21 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
                     valid_output = ppo_network.weights_valid()
 
         # Print Information
-        current_episode += 1
         if len(evaluated_commands) > BATCH_SIZE and params.train_model:
             ppo_network.print_information()
-            print(f"Episode: {current_episode}")
+            print(f"Episode: {car_racing.current_episode()}")
 
-        # Update Evaluated Commands
+        # For every Command, save the Reward for the 5 next steps after it
         for i in range(len(episode_evaluated_commands)):
             for j in range(5):
-                if i + j < len(episode_evaluated_commands):
-                    reward = episode_rewards[i+j] if episode_rewards[i+j] > 0 else -15
-                    episode_evaluated_commands[i].rewards.append(reward)
-                else:
-                    episode_evaluated_commands[i].rewards.append(-15)
+                reward = episode_rewards[i+j] if (i+j < len(episode_evaluated_commands) and episode_rewards[i+j] > 0) \
+                                              else -15
+                episode_evaluated_commands[i].rewards.append(reward)
         evaluated_commands += episode_evaluated_commands
         if len(evaluated_commands) > BUFFER_SIZE:
            evaluated_commands = evaluated_commands[-BUFFER_SIZE:]
 
+        # Print for Inference Mode
         if not params.train_model:
             for i, episode in enumerate(episode_evaluated_commands):
                 print(f"Move: {str(episode.command)}, Advantage Score: {ppo_network.advantage_scores(episode_evaluated_commands)[i]}")

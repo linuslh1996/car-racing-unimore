@@ -17,7 +17,7 @@ from car_racing import state_to_tensor, Command, EvaluatedCommand, CustomRacing
 from q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
 
 BATCH_SIZE = 128
-BUFFER_SIZE = 250
+BUFFER_SIZE = 2000
 
 class PPONetwork(nn.Module):
 
@@ -61,34 +61,43 @@ class PPONetwork(nn.Module):
         self.load_state_dict(other_network.state_dict())
 
     def predict(self, input_state: List[np.ndarray], in_train_mode: bool) -> Tuple[Command, float]:
-        as_tensor: torch.Tensor = state_to_tensor(input_state)
-        as_tensor = as_tensor[None, ...]
-        action_probabilities: torch.Tensor = self(as_tensor)
-        distribution: Categorical = Categorical(action_probabilities)
+        policy_scores: torch.Tensor = self.get_policy_scores([input_state])
+        distribution: Categorical = Categorical(policy_scores)
         sampled_action = distribution.sample()
         command_to_take: Command = Command(0)
         if in_train_mode:
             command_to_take = Command(int(sampled_action))
         else:
-            command_to_take = Command(int(torch.argmax(action_probabilities)))
+            command_to_take = Command(int(torch.argmax(policy_scores)))
         log_probability = distribution.log_prob(sampled_action)
         return command_to_take, log_probability
 
     def advantage_scores(self, evaluated_commands: List[EvaluatedCommand]) -> torch.Tensor:
-        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[2:4]) for command in evaluated_commands])
-        advantages: torch.Tensor = next_steps_mean
+        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[1:3]) for command in evaluated_commands])
+        correct_for_brakes: torch.Tensor = torch.tensor([next_steps_mean[i] if evaluated_commands[i].command != Command.BRAKE
+                                                                else next_steps_mean[i] + 5
+                                                                for i in range(len(next_steps_mean))])
+        advantages: torch.Tensor = correct_for_brakes
         return advantages
+
+    def get_policy_scores(self, states_to_predict: List[List[np.ndarray]]) -> torch.Tensor:
+        states_to_predict: List[torch.Tensor] = [state_to_tensor(state) for state in states_to_predict]
+        policy_scores = self(torch.stack(states_to_predict))
+        sum_greater_zero: torch.Tensor = torch.stack([scores if torch.sum(scores) > 0
+                                                  else torch.ones(len(Command.all_commands()))
+                                                  for scores in policy_scores])
+        return sum_greater_zero
 
     def train_model(self, evaluated_commands: List[EvaluatedCommand]):
         # Create Neccessary input tensors
-        states_to_predict: List[torch.Tensor] = [state_to_tensor(command.state) for command in evaluated_commands]
+        states_to_predict: List[List[np.ndarray]] = [command.state for command in evaluated_commands]
         performed_actions: torch.Tensor = torch.tensor([int(command.command) for command in evaluated_commands])
         old_probabilites: torch.Tensor = torch.tensor([command.log_probability for command in evaluated_commands])
-        current_rewards: torch.Tensor = torch.tensor([command.rewards[1] for command in evaluated_commands])
+        current_rewards: torch.Tensor = torch.tensor([command.rewards[0] for command in evaluated_commands])
 
         # Calculate Advantages
+        policy_scores: torch.Tensor = self.get_policy_scores(states_to_predict)
         advantages: torch.Tensor = self.advantage_scores(evaluated_commands)
-        policy_scores = self(torch.stack(states_to_predict))
 
         # Calculate Ratio
         new_probabilities: Categorical = Categorical(policy_scores).log_prob(performed_actions)
@@ -127,21 +136,21 @@ class PPONetwork(nn.Module):
         print(f"Loss: {round(float(self.current_loss), 2)}")
 
 
-def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: TrainingParameters):
+def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, params: TrainingParameters):
     # Init Car Racing
-    car_racing: CustomRacing = CustomRacing(start_episode)
     evaluated_commands: List[EvaluatedCommand] = []
 
     # Do Car Racing
-    while car_racing.current_episode() <= 1500:
-        car_racing.reset()
+    while car_racing.current_episode() <= 2500:
+        car_racing.reset(seed=0)
         if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
             ppo_network.save_model(car_racing.current_episode())
 
         # Drive on Track until leaving Track
         states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
         episode_evaluated_commands: List[EvaluatedCommand] = []
-        episode_rewards: List[float] = [0]
+        episode_rewards: List[float] = []
+
         while not car_racing.out_of_track():
 
             # Select Action
@@ -149,6 +158,7 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
             accumulated_reward: float = car_racing.perform_step(command, render=not params.train_model)
             if car_racing.done():
                 print("Finished Track!")
+                ppo_network.save_model(car_racing.current_episode())
                 break
 
             # Save Actions to Memory
@@ -160,12 +170,11 @@ def perform_ppo_learning(start_episode: int, ppo_network: PPONetwork, params: Tr
 
             # Train Model
             if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+                sampled = random.sample(evaluated_commands, BATCH_SIZE)
                 ppo_network.save_model(-1)
-                valid_output = False
-                while not valid_output:
-                    sampled = random.sample(evaluated_commands, BATCH_SIZE)
-                    ppo_network.train_model(sampled)
-                    valid_output = ppo_network.weights_valid()
+                ppo_network.train_model(sampled)
+                if not ppo_network.weights_valid():
+                    ppo_network.load_model(-1)
 
         # Print Information
         if len(evaluated_commands) > BATCH_SIZE and params.train_model:

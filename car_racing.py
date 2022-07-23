@@ -19,11 +19,11 @@ class Command(IntEnum):
 
     def as_action(self) -> np.ndarray:
         action_dict: Dict[Command, List[float]] = {
-            Command.LEFT: [-1, 0.5, 0],
-            Command.NO_DIRECTION: [0, 0.5, 0],
-            Command.RIGHT: [1, 0.5, 0],
+            Command.LEFT: [-1, 0, 0],
+            Command.NO_DIRECTION: [0, 0, 0],
+            Command.RIGHT: [1, 0, 0],
             Command.GAS: [0, 1, 0],
-            Command.BRAKE: [0, 0, 0.8]
+            Command.BRAKE: [0, 1, 0.5]
         }
         return np.array(action_dict[self])
 
@@ -90,4 +90,4 @@ class CustomRacing:
         return self._current_episode
 
     def out_of_track(self):
-        return self._negative_rewards_in_a_row >= 20 / STEP_SIZE and self._current_time > 50
+        return self._negative_rewards_in_a_row >= 30 / STEP_SIZE and self._current_time > 50

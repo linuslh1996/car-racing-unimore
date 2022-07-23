@@ -116,9 +116,8 @@ class QNetwork(nn.Module):
         print(f"Loss: {round(float(loss), 2)}")
 
 
-def learn_q_values(start_episode: int, start_epsilon: float, q_learner: QNetwork, params: TrainingParameters):
+def learn_q_values(car_racing: CustomRacing, start_epsilon: float, q_learner: QNetwork, params: TrainingParameters):
     # Init Car Racing
-    car_racing: CustomRacing = CustomRacing(start_episode)
     q_target_net: QNetwork = QNetwork(Path())
     q_target_net.set_weights(q_learner)
     evaluated_commands: List[EvaluatedCommand] = []

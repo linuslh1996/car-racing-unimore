@@ -11,7 +11,7 @@ NUMBER_OF_COMMANDS = 10
 NUMBER_OF_DESTROYED = 5
 NUMBER_OF_NEIGHBOORS = 5
 SECTION_SIZE = 5
-NUMBER_STEPS = 8
+NUMBER_STEPS = 4
 STEPS_CUTOFF = 3
 
 
@@ -79,15 +79,17 @@ def perform_ruin_and_recreate(car_racing: cr.CustomRacing, metaheuristics_safe: 
         # Initialize Everything
         already_performed_commands: List[cr.Command] = load_commands(metaheuristics_safe) if metaheuristics_safe.exists() else []
         initial_solution: List[cr.Command] = [random.choice(cr.Command.all_commands()) for i in range(NUMBER_OF_COMMANDS)]
-        neighbours: List[List[cr.Command]] = [create_neighbour(initial_solution) for i in range(NUMBER_OF_NEIGHBOORS)]
+        candidates_for_local_search: List[List[cr.Command]] = [create_neighbour(initial_solution) for i in range(NUMBER_OF_NEIGHBOORS)]
+        candidates_for_local_search.append(initial_solution)
         best_solution: List[cr.Command] = initial_solution
         best_score: float = 0
         for step in range(NUMBER_STEPS):
-            local_searched_solution, _ = local_search(neighbours, already_performed_commands, car_racing)
+            local_searched_solution, _ = local_search(candidates_for_local_search, already_performed_commands, car_racing)
             destroyed_solutions: List[List[cr.Command]] = [create_destroyed_solution(local_searched_solution) for i in range(NUMBER_OF_DESTROYED)]
             for destroyed_solution in destroyed_solutions:
-                neighbours_of_destroyed: List[List[cr.Command]] = [create_neighbour(destroyed_solution) for i in range(NUMBER_OF_NEIGHBOORS)]
-                best_neighbour_of_destroyed, score = local_search(neighbours_of_destroyed, already_performed_commands, car_racing)
+                candidates_destroyed_of_local_search: List[List[cr.Command]] = [create_neighbour(destroyed_solution) for i in range(NUMBER_OF_NEIGHBOORS)]
+                candidates_destroyed_of_local_search.append(destroyed_solution)
+                best_neighbour_of_destroyed, score = local_search(candidates_destroyed_of_local_search, already_performed_commands, car_racing)
                 if score > best_score:
                     best_solution = best_neighbour_of_destroyed
                     best_score = score

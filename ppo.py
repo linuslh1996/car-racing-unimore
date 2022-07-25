@@ -73,11 +73,8 @@ class PPONetwork(nn.Module):
         return command_to_take, log_probability
 
     def advantage_scores(self, evaluated_commands: List[EvaluatedCommand]) -> torch.Tensor:
-        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[1:3]) for command in evaluated_commands])
-        correct_for_brakes: torch.Tensor = torch.tensor([next_steps_mean[i] if evaluated_commands[i].command != Command.BRAKE
-                                                                else next_steps_mean[i] + 5
-                                                                for i in range(len(next_steps_mean))])
-        advantages: torch.Tensor = correct_for_brakes
+        next_steps_mean: torch.Tensor = torch.tensor([statistics.mean(command.rewards[1:5]) for command in evaluated_commands])
+        advantages: torch.Tensor = next_steps_mean
         return advantages
 
     def get_policy_scores(self, states_to_predict: List[List[np.ndarray]]) -> torch.Tensor:
@@ -145,7 +142,6 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
         car_racing.reset(seed=0)
         if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
             ppo_network.save_model(car_racing.current_episode())
-
         # Drive on Track until leaving Track
         states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
         episode_evaluated_commands: List[EvaluatedCommand] = []

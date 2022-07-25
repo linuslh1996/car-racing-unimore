@@ -125,17 +125,15 @@ def learn_q_values(car_racing: CustomRacing, start_epsilon: float, q_learner: QN
 
     # Do Car Racing
     while car_racing.current_episode() <= 1000:
-        car_racing.reset()
+        car_racing.reset(seed=0)
         if car_racing.current_episode() % params.target_network_update_frequency == 0:
             q_target_net.set_weights(q_learner)
         if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
             q_learner.save_model(car_racing.current_episode())
 
         # Drive on Track until leaving Track
-        negative_rewards_in_a_row: int = 0
-        current_time: int = 1
         states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
-        while negative_rewards_in_a_row < (20 / params.step_size) or current_time < 50:
+        while not car_racing.out_of_track():
 
             # Select Action and Perform it "STEP_SIZE" times
             command, score, scores = q_learner.predict(states)

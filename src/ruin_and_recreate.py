@@ -82,6 +82,8 @@ def perform_ruin_and_recreate(car_racing: cr.CustomRacing, metaheuristics_safe: 
         best_solution: List[cr.Command] = initial_solution
         best_score: float = 0
         for step in range(NUMBER_STEPS):
+
+            # Local Search, Destroy Parts of Solution, Local Search Again
             local_searched_solution, _ = local_search(candidates_for_local_search, already_performed_commands, car_racing)
             destroyed_solutions: List[List[cr.Command]] = [create_destroyed_solution(local_searched_solution) for i in range(NUMBER_OF_DESTROYED)]
             for destroyed_solution in destroyed_solutions:

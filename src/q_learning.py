@@ -27,7 +27,6 @@ class QLearningMetadata:
 
 @dataclass
 class TrainingParameters:
-    step_size: int
     learning_rate: float
     target_network_update_frequency: int
     train_model: bool

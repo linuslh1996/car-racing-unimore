@@ -13,7 +13,7 @@ import torch.nn.functional as fn
 from torch.distributions import Categorical
 
 from src.car_racing import state_to_tensor, Command, EvaluatedCommand, CustomRacing
-from src.q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
+from src.q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE
 
 BATCH_SIZE = 128
 BUFFER_SIZE = 2000
@@ -138,7 +138,7 @@ class PPONetwork(nn.Module):
         print(f"Loss: {round(float(self.current_loss), 2)}")
 
 
-def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, params: TrainingParameters):
+def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, train_model: bool):
     # Init Car Racing
     evaluated_commands: List[EvaluatedCommand] = []
 
@@ -147,6 +147,7 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
         car_racing.reset(seed=0)
         if car_racing.current_episode() % MODEL_SAVE_FREQUENCY == 0 and car_racing.current_episode() > 0:
             ppo_network.save_model(car_racing.current_episode())
+
         # Drive on Track until leaving Track
         states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
         episode_evaluated_commands: List[EvaluatedCommand] = []
@@ -155,8 +156,8 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
         while not car_racing.out_of_track():
 
             # Select Action
-            command, log_prob = ppo_network.predict(states, params.train_model)
-            accumulated_reward: float = car_racing.perform_step(command, render=not params.train_model)
+            command, log_prob = ppo_network.predict(states, train_model)
+            accumulated_reward: float = car_racing.perform_step(command, render=not train_model)
             if car_racing.done():
                 print("Finished Track!")
                 ppo_network.save_model(car_racing.current_episode())
@@ -170,7 +171,7 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
             states = states[1:STATES_SIZE + 1]
 
             # Train Model
-            if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+            if len(evaluated_commands) > BATCH_SIZE and train_model:
                 sampled = random.sample(evaluated_commands, BATCH_SIZE)
                 ppo_network.save_model(-1)
                 ppo_network.train_model(sampled)
@@ -178,7 +179,7 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
                     ppo_network.load_model(-1)
 
         # Print Information
-        if len(evaluated_commands) > BATCH_SIZE and params.train_model:
+        if len(evaluated_commands) > BATCH_SIZE and train_model:
             ppo_network.print_information()
             print(f"Episode: {car_racing.current_episode()}")
 
@@ -193,10 +194,11 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
            evaluated_commands = evaluated_commands[-BUFFER_SIZE:]
 
         # Print for Inference Mode
-        if not params.train_model:
+        if not train_model:
             for i, episode in enumerate(episode_evaluated_commands):
                 print(f"Move: {str(episode.command)}, Advantage Score: {ppo_network.advantage_scores(episode_evaluated_commands)[i]}")
             print("")
+
 
 def get_ppo_data(car_racing: CustomRacing, ppo_network: PPONetwork) -> List[PPOMetadata]:
     metadatas: List[PPOMetadata] = []

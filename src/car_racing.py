@@ -23,7 +23,7 @@ class Command(IntEnum):
             Command.NO_DIRECTION: [0, 0, 0],
             Command.RIGHT: [1, 0, 0],
             Command.GAS: [0, 1, 0],
-            Command.BRAKE: [0, 1, 0.5]
+            Command.BRAKE: [0, 1, 0.5] # We still use Gas so that the car can move forward very slowly after braking
         }
         return np.array(action_dict[self])
 

@@ -89,5 +89,8 @@ class CustomRacing:
     def current_episode(self) -> int:
         return self._current_episode
 
+    def accumulated(self) -> float:
+        return self._accumulated_reward
+
     def out_of_track(self):
         return self._negative_rewards_in_a_row >= 30 / STEP_SIZE and self._current_time > 50

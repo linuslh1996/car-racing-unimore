@@ -1,4 +1,5 @@
 import random
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
@@ -9,7 +10,7 @@ import torch.nn.functional as fn
 import torch.optim as optim
 import numpy as np
 
-from car_racing import EvaluatedCommand, Command, state_to_tensor, CustomRacing
+from src.car_racing import EvaluatedCommand, Command, state_to_tensor, CustomRacing
 
 BATCH_SIZE: int = 64
 EPSILON_DECAY = 0.9999
@@ -17,6 +18,12 @@ MODEL_SAVE_FREQUENCY = 50
 BUFFER_SIZE = 1000
 STATES_SIZE = 3
 GAMMA = 0.95
+
+@dataclass
+class QLearningMetadata:
+    episode: int
+    average_rewards: float
+    average_q_value: float
 
 @dataclass
 class TrainingParameters:
@@ -124,7 +131,7 @@ def learn_q_values(car_racing: CustomRacing, start_epsilon: float, q_learner: QN
     epsilon: float = start_epsilon
 
     # Do Car Racing
-    while car_racing.current_episode() <= 1000:
+    while car_racing.current_episode() <= 1500:
         car_racing.reset(seed=0)
         if car_racing.current_episode() % params.target_network_update_frequency == 0:
             q_target_net.set_weights(q_learner)
@@ -162,3 +169,31 @@ def learn_q_values(car_racing: CustomRacing, start_epsilon: float, q_learner: QN
                                    q_learner.current_loss, GAMMA, q_target_net)
             print(f"Epsilon: {epsilon}")
             print(f"Episode: {car_racing.current_episode()}")
+
+
+def create_graph_data(car_racing: CustomRacing, q_learner: QNetwork) -> List[QLearningMetadata]:
+    metadatas: List[QLearningMetadata] = []
+    for episode in range(50, 1550, 50):
+        print(f"Episode: {episode}")
+        q_learner.load_model(episode)
+        average_q_scores: List[float] = []
+        accumulated_scores: List[float] = []
+        for _ in range(10):
+            car_racing.reset(seed=0)
+            states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
+            while not car_racing.out_of_track() and not car_racing.done():
+                command, score, scores = q_learner.predict(states)
+                average_q_scores.append(float(torch.mean(scores)))
+                car_racing.perform_step(command)
+                states.append(car_racing.current_state())
+                states = states[1:STATES_SIZE+1]
+            accumulated_scores.append(car_racing.accumulated())
+        metadatas.append(QLearningMetadata(episode, statistics.mean(accumulated_scores), statistics.mean(average_q_scores)))
+    return metadatas
+
+
+
+
+
+
+

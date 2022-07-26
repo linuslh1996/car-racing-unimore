@@ -3,9 +3,7 @@ from pathlib import Path
 from typing import List, Tuple
 import json
 
-from gym.envs.box2d import CarRacing
-import car_racing as cr
-
+from src import car_racing as cr
 
 NUMBER_OF_COMMANDS = 10
 NUMBER_OF_DESTROYED = 5
@@ -103,4 +101,13 @@ def perform_ruin_and_recreate(car_racing: cr.CustomRacing, metaheuristics_safe: 
             # Save
             save_commands(metaheuristics_safe, already_performed_commands + best_solution[:-STEPS_CUTOFF])
 
+
+def get_metaheuristics_data(car_racing: cr.CustomRacing, metaheuristics_safe: Path) -> List[float]:
+    commands: List[cr.Command] = load_commands(metaheuristics_safe)
+    accumulated_reward: List[float] = []
+    car_racing.reset(seed=0)
+    for command in commands:
+        car_racing.perform_step(command)
+        accumulated_reward.append(car_racing.accumulated())
+    return accumulated_reward
 

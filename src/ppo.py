@@ -1,23 +1,28 @@
 import random
 import statistics
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
-import gym
 import numpy as np
 import torch
-from gym.envs.box2d import CarRacing
 from torch import nn, optim
 import torch.nn.functional as F
 
 import torch.nn.functional as fn
 from torch.distributions import Categorical
 
-from car_racing import state_to_tensor, Command, EvaluatedCommand, CustomRacing
-from q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
+from src.car_racing import state_to_tensor, Command, EvaluatedCommand, CustomRacing
+from src.q_learning import MODEL_SAVE_FREQUENCY, STATES_SIZE, TrainingParameters
 
 BATCH_SIZE = 128
 BUFFER_SIZE = 2000
+
+@dataclass
+class PPOMetadata:
+    episode: int
+    average_reward: float
+    reward_development: List[List[float]]
 
 class PPONetwork(nn.Module):
 
@@ -193,6 +198,26 @@ def perform_ppo_learning(car_racing: CustomRacing, ppo_network: PPONetwork, para
                 print(f"Move: {str(episode.command)}, Advantage Score: {ppo_network.advantage_scores(episode_evaluated_commands)[i]}")
             print("")
 
-
-
+def get_ppo_data(car_racing: CustomRacing, ppo_network: PPONetwork) -> List[PPOMetadata]:
+    metadatas: List[PPOMetadata] = []
+    for episode in range(50, 1550, 50):
+        print(f"Episode: {episode}")
+        ppo_network.load_model(episode)
+        accumulated_scores: List[float] = []
+        score_development: List[List[float]] = []
+        for _ in range(10):
+            car_racing.reset(seed=0)
+            states: List[np.ndarray] = [car_racing.current_state() for _ in range(STATES_SIZE)]
+            scores_for_attempt: List[float] = []
+            while not car_racing.out_of_track() and not car_racing.done():
+                command, _ = ppo_network.predict(states, False)
+                car_racing.perform_step(command)
+                states.append(car_racing.current_state())
+                states = states[1:STATES_SIZE + 1]
+                scores_for_attempt.append(car_racing.accumulated())
+            score_development.append(scores_for_attempt)
+            accumulated_scores.append(car_racing.accumulated())
+        metadatas.append(
+            PPOMetadata(episode, statistics.mean(accumulated_scores), score_development))
+    return metadatas
 

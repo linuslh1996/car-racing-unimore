@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 To train: 
 ````
-python train_qlearning.py folder_name -t 0
+python train_qlearning.py save_folder_name -t 0
 ````
 
 To view the results:
@@ -25,7 +25,7 @@ python train_qlearning.py q_learning_trained -i 1500
 
 To train: 
 ````
-python train_ppo.py folder_name -t 0
+python train_ppo.py save_folder_name -t 0
 ````
 
 To view the results:
@@ -37,7 +37,7 @@ python train_ppo.py ppo_trained -i 1500
 
 To train: 
 ````
-python train_ruin_and_recreate.py file_name -t
+python train_ruin_and_recreate.py save_file_name -t
 ````
 
 To view the results:

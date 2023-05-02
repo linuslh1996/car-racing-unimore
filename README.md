@@ -1,4 +1,4 @@
-This is a seminar project that we did during our Erasmus stay at Unimore, Modena. In the project, we implemented several approaches to solve the car racing problem. To sum it up, Q Learning performed quite dissappointingly (even after we spend a lot of time parameter tuning!), PPO was surprisingly good and stable, and the EA approach worked fine but was very time-consuming.
+This is a seminar project that we did during our Erasmus stay at Unimore, Modena. In the project, we implemented several approaches to solve the car racing problem. To sum it up, Q Learning performed quite dissappointingly (even after we spend a lot of time parameter tuning!), PPO was surprisingly good and stable, and the EA approach worked fine but took the most computer resources.
 
 
 # Installation

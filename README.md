@@ -1,4 +1,4 @@
-In the project, we implemented several approaches to solve the car racing problem.
+In the project, we implemented several approaches to solve the car racing problem. To sum it up, Q Learning performed quite dissappointingly (even after we spend a lot of time parameter tuning!), PPO was surprisignly good and stable, and the EA approach worked fine but was very time-consuming.
 
 # Installation
 

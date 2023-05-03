@@ -1,4 +1,4 @@
-This is a seminar project that we did during our Erasmus stay at Unimore, Modena. In the project, we implemented several approaches to solve the car racing problem. To sum it up, Q Learning performed quite dissappointingly (even after we spend a lot of time parameter tuning!), PPO was surprisingly good and stable, and the EA approach worked fine but took the most computer resources.
+This is a seminar project that we did during our Erasmus stay at Unimore, Modena. In the project, we implemented several approaches to solve the car racing problem. To sum it up, Q Learning performed quite dissappointingly (even after we spend a lot of time parameter tuning!), PPO was surprisingly good and stable, and the EA approach worked fine but took the most computing resources.
 
 
 # Installation
@@ -12,7 +12,7 @@ pip install -r requirements.txt
 
 # Q Learning
 
-QLearning was very sensitive for us in regards to its parameters. This is in line with what the literature says, for example [here](https://w3.cs.jmu.edu/spragunr/papers/rldm2015.pdf). To solve this sensitivity, we could have implemented a more elaborate approach, for example [Double Q Learning]((https://arxiv.org/pdf/1509.06461.pdf). However, we decided against that, which means that our results for QLearning were a bit mediocre.
+QLearning was very sensitive for us in regards to its parameters. This is in line with what the literature says, for example [here](https://w3.cs.jmu.edu/spragunr/papers/rldm2015.pdf). To solve this sensitivity, we could have implemented a more elaborate approach, for example [Double Q Learning](https://arxiv.org/pdf/1509.06461.pdf). However, we decided against that, which means that our results for QLearning were a bit mediocre.
 
 https://user-images.githubusercontent.com/33374886/235738296-69c9976c-c158-42ab-84d1-c6e017f01817.mp4
 
